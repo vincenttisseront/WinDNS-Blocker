@@ -396,50 +396,90 @@ public sealed class HubRuntime
     public async Task<UpdateCheckResult> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
         var cfg = GetConfig();
-        var result = await _updateChecker.CheckAsync(cfg.UpdateFeedUrl, AppVersion.Current, cancellationToken)
-            .ConfigureAwait(false);
-        lock (_updateGate)
-            _lastUpdateCheck = result;
-        if (result.UpdateAvailable)
-            _logs.Write($"Update available: {result.Manifest?.Version} (current {result.CurrentVersion})");
-        else
-            _logs.Write(result.Message ?? "No update available");
-        return result;
+        try
+        {
+            var result = await _updateChecker.CheckAsync(cfg.UpdateFeedUrl, AppVersion.Current, cancellationToken)
+                .ConfigureAwait(false);
+            lock (_updateGate)
+                _lastUpdateCheck = result;
+            if (result.UpdateAvailable)
+                _logs.Write($"Update available: {result.Manifest?.Version} (current {result.CurrentVersion})");
+            else
+                _logs.Write(result.Message ?? "No update available");
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // UpdateChecker already swallows most failures; keep IPC from ever faulting the pipe.
+            var failed = new UpdateCheckResult
+            {
+                UpdateAvailable = false,
+                FeedError = true,
+                CurrentVersion = AppVersion.Current,
+                Message = "Échec de la vérification des mises à jour. / Update check failed. " + ex.Message
+            };
+            lock (_updateGate)
+                _lastUpdateCheck = failed;
+            _logs.Write($"Update check failed: {ex.Message}");
+            return failed;
+        }
     }
 
     /// <summary>
     /// Installs an update via msiexec. Prefer silent=true when called from the service
     /// (already LocalSystem). Do not stop the service manually — the MSI ServiceControl
     /// table should stop/restart DnsBlocker during the upgrade.
+    /// Never kills the host process after starting msiexec; failures return <see cref="UpdateInstallResult"/>.
     /// </summary>
     public async Task<UpdateInstallResult> InstallUpdateAsync(
         UpdateManifest? manifest = null,
         bool silent = true,
         CancellationToken cancellationToken = default)
     {
-        if (manifest is null)
+        try
         {
-            var check = await CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
-            if (!check.UpdateAvailable || check.Manifest is null)
+            if (manifest is null)
             {
-                return new UpdateInstallResult
+                var check = await CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
+                if (!check.UpdateAvailable || check.Manifest is null)
                 {
-                    Started = false,
-                    Success = false,
-                    Error = check.Message ?? "No update available to install."
-                };
+                    return new UpdateInstallResult
+                    {
+                        Started = false,
+                        Success = false,
+                        Error = check.Message ?? "No update available to install."
+                    };
+                }
+
+                manifest = check.Manifest;
             }
 
-            manifest = check.Manifest;
+            _logs.Write($"Starting MSI update {manifest.Version} (silent={silent})");
+            var result = await _updateInstaller.InstallAsync(manifest, silent, cancellationToken).ConfigureAwait(false);
+            if (result.Started)
+                _logs.Write($"msiexec started for {manifest.Version} — service may stop via MSI ServiceControl; host process not terminated");
+            else
+                _logs.Write($"Update install failed: {result.Error}");
+            return result;
         }
-
-        _logs.Write($"Starting MSI update {manifest.Version} (silent={silent})");
-        var result = await _updateInstaller.InstallAsync(manifest, silent, cancellationToken).ConfigureAwait(false);
-        if (result.Started)
-            _logs.Write($"msiexec started for {manifest.Version} — service may stop via MSI ServiceControl");
-        else
-            _logs.Write($"Update install failed: {result.Error}");
-        return result;
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logs.Write($"Update install exception: {ex.Message}");
+            return new UpdateInstallResult
+            {
+                Started = false,
+                Success = false,
+                Error = "Échec de l'installation de la mise à jour. / Update install failed. " + ex.Message
+            };
+        }
     }
 
     /// <summary>

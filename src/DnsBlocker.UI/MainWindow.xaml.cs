@@ -316,11 +316,23 @@ public partial class MainWindow : Window
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
     {
-        await RunBusyAsync(Loc.T("Main.Busy.CheckUpdates"), async () =>
+        try
         {
-            _journal.Write(Loc.T("Main.Journal.CheckUpdates"));
-            await CheckUpdatesAsync(promptIfAvailable: true, quietIfCurrent: false).ConfigureAwait(true);
-        }).ConfigureAwait(true);
+            await RunBusyAsync(Loc.T("Main.Busy.CheckUpdates"), async () =>
+            {
+                _journal.Write(Loc.T("Main.Journal.CheckUpdates"));
+                await CheckUpdatesAsync(promptIfAvailable: true, quietIfCurrent: false).ConfigureAwait(true);
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            // async void safety net — never let update check tear down the window
+            var msg = FormatUpdateFeedError(ex.Message);
+            UpdateStatusLine.Text = Loc.F("Main.Update.ErrorLine", msg);
+            _journal.Write(Loc.F("Main.Journal.CheckUpdatesError", msg));
+            MessageBox.Show(msg, Loc.T("Main.Update.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+            RefreshLogsView();
+        }
     }
 
     private async void SaveConfig_Click(object sender, RoutedEventArgs e)
@@ -777,31 +789,7 @@ public partial class MainWindow : Window
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Information);
                 if (choice == MessageBoxResult.Yes)
-                {
-                    UpdateStatusLine.Text = Loc.T("Main.Update.Installing");
-                    _journal.Write(Loc.F("Main.Journal.InstallUpdate", result.Manifest.Version));
-                    var install = await _client.InstallUpdateAsync(result.Manifest, silent: true)
-                        .ConfigureAwait(true);
-                    if (install.Started)
-                    {
-                        UpdateStatusLine.Text = Loc.T("Main.Update.MsiexecStarted");
-                        _journal.Write(Loc.T("Main.Journal.InstallStarted"));
-                        MessageBox.Show(
-                            Loc.T("Main.Update.InstallStartedBox"),
-                            Loc.T("AppName"),
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Information);
-                    }
-                    else
-                    {
-                        UpdateStatusLine.Text = Loc.F("Main.Update.InstallFail",
-                            install.Error ?? Loc.T("Main.Update.InstallFailUnknown"));
-                        _journal.Write(Loc.F("Main.Journal.InstallFail", install.Error ?? "?"));
-                        MessageBox.Show(install.Error ?? Loc.T("Main.Update.InstallFailUnknown"),
-                            Loc.T("Main.Update.ErrorTitle"),
-                            MessageBoxButton.OK, MessageBoxImage.Error);
-                    }
-                }
+                    await InstallUpdateKeepingUiOpenAsync(result.Manifest).ConfigureAwait(true);
                 else
                 {
                     UpdateStatusLine.Text = Loc.F("Main.Update.Later", result.Manifest.Version);
@@ -837,6 +825,7 @@ public partial class MainWindow : Window
             var msg = FormatUpdateFeedError(ex.Message);
             UpdateStatusLine.Text = Loc.F("Main.Update.ErrorLine", msg);
             _journal.Write(Loc.F("Main.Journal.CheckUpdatesError", msg));
+            // Always surface errors for the manual button; startup quiet path still keeps the window open.
             if (!quietIfCurrent)
                 MessageBox.Show(msg, Loc.T("Main.Update.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -844,6 +833,72 @@ public partial class MainWindow : Window
         {
             RefreshLogsView();
         }
+    }
+
+    /// <summary>
+    /// Runs InstallUpdate via IPC. Never closes/kills the UI when msiexec starts — show MessageBox instead.
+    /// Pipe breaks after msiexec (service stopped by MSI) are treated as a soft success warning.
+    /// </summary>
+    private async Task InstallUpdateKeepingUiOpenAsync(UpdateManifest manifest)
+    {
+        UpdateStatusLine.Text = Loc.T("Main.Update.Installing");
+        _journal.Write(Loc.F("Main.Journal.InstallUpdate", manifest.Version));
+        try
+        {
+            var install = await _client.InstallUpdateAsync(manifest, silent: true).ConfigureAwait(true);
+            if (install.Started)
+            {
+                UpdateStatusLine.Text = Loc.T("Main.Update.MsiexecStarted");
+                _journal.Write(Loc.T("Main.Journal.InstallStarted"));
+                MessageBox.Show(
+                    Loc.T("Main.Update.InstallStartedBox"),
+                    Loc.T("AppName"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var err = install.Error ?? Loc.T("Main.Update.InstallFailUnknown");
+            UpdateStatusLine.Text = Loc.F("Main.Update.InstallFail", err);
+            _journal.Write(Loc.F("Main.Journal.InstallFail", err));
+            MessageBox.Show(err, Loc.T("Main.Update.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        catch (Exception ex) when (IsLikelyMsiexecPipeDrop(ex))
+        {
+            // msiexec may have stopped the service before the IPC reply — UI must stay open.
+            UpdateStatusLine.Text = Loc.T("Main.Update.MsiexecStarted");
+            _journal.Write(Loc.T("Main.Journal.InstallPipeDrop"));
+            MessageBox.Show(
+                Loc.T("Main.Update.InstallPipeDropBox"),
+                Loc.T("AppName"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            var msg = FormatUpdateFeedError(ex.Message);
+            UpdateStatusLine.Text = Loc.F("Main.Update.InstallFail", msg);
+            _journal.Write(Loc.F("Main.Journal.InstallFail", msg));
+            MessageBox.Show(msg, Loc.T("Main.Update.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static bool IsLikelyMsiexecPipeDrop(Exception ex)
+    {
+        for (var cur = ex; cur is not null; cur = cur.InnerException)
+        {
+            if (cur is IOException or ObjectDisposedException)
+                return true;
+            var m = cur.Message ?? "";
+            if (m.Contains("pipe", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("Broken", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("transport", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("ne répond pas", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("not respond", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private void BindConfig(AppConfig cfg)

@@ -43,55 +43,95 @@ public sealed class UpdateChecker : IUpdateChecker
             };
         }
 
-        HttpResponseMessage response;
         try
         {
-            response = await _http.GetAsync(resolved, cancellationToken).ConfigureAwait(false);
-        }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return FeedError(current, resolved,
-                "Délai dépassé en contactant le flux de mise à jour. / Update feed request timed out.");
-        }
-        catch (HttpRequestException ex)
-        {
-            return FeedError(current, resolved,
-                "Impossible de joindre le flux de mise à jour. / Cannot reach update feed. " +
-                (ex.Message.Length > 120 ? ex.Message[..120] + "…" : ex.Message));
-        }
-
-        using (response)
-        {
-            if (!response.IsSuccessStatusCode)
+            HttpResponseMessage response;
+            try
             {
-                return FeedError(current, resolved, FormatHttpStatusMessage(response.StatusCode, resolved));
+                response = await _http.GetAsync(resolved, cancellationToken).ConfigureAwait(false);
             }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-            var manifest = ParseManifest(json);
-            if (manifest is null)
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 return FeedError(current, resolved,
-                    "version.json invalide (JSON). / version.json did not contain a valid manifest.");
+                    "Délai dépassé en contactant le flux de mise à jour. / Update feed request timed out.");
             }
-
-            if (string.IsNullOrWhiteSpace(manifest.Version))
+            catch (HttpRequestException ex)
             {
                 return FeedError(current, resolved,
-                    "version.json sans champ « version ». / version.json is missing 'version'.");
+                    "Impossible de joindre le flux de mise à jour. / Cannot reach update feed. " +
+                    Truncate(ex.Message, 120));
+            }
+            catch (IOException ex)
+            {
+                return FeedError(current, resolved,
+                    "Erreur I/O en contactant le flux de mise à jour. / I/O error contacting update feed. " +
+                    Truncate(ex.Message, 120));
             }
 
-            var available = AppVersion.IsNewerThan(manifest.Version, current);
-            return new UpdateCheckResult
+            using (response)
             {
-                UpdateAvailable = available,
-                CurrentVersion = current,
-                Manifest = manifest,
-                Message = available
-                    ? $"Mise à jour disponible : {manifest.Version} / Update available: {manifest.Version}"
-                    : $"À jour ({current}). / Already up to date ({current})."
-            };
+                if (!response.IsSuccessStatusCode)
+                {
+                    return FeedError(current, resolved, FormatHttpStatusMessage(response.StatusCode, resolved));
+                }
+
+                string json;
+                try
+                {
+                    json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (IOException ex)
+                {
+                    return FeedError(current, resolved,
+                        "Impossible de lire version.json. / Failed to read version.json. " +
+                        Truncate(ex.Message, 120));
+                }
+
+                UpdateManifest? manifest;
+                try
+                {
+                    manifest = ParseManifest(json);
+                }
+                catch (JsonException)
+                {
+                    return FeedError(current, resolved,
+                        "version.json invalide (JSON). / version.json did not contain a valid manifest.");
+                }
+
+                if (manifest is null)
+                {
+                    return FeedError(current, resolved,
+                        "version.json invalide (JSON). / version.json did not contain a valid manifest.");
+                }
+
+                if (string.IsNullOrWhiteSpace(manifest.Version))
+                {
+                    return FeedError(current, resolved,
+                        "version.json sans champ « version ». / version.json is missing 'version'.");
+                }
+
+                var available = AppVersion.IsNewerThan(manifest.Version, current);
+                return new UpdateCheckResult
+                {
+                    UpdateAvailable = available,
+                    CurrentVersion = current,
+                    Manifest = manifest,
+                    Message = available
+                        ? $"Mise à jour disponible : {manifest.Version} / Update available: {manifest.Version}"
+                        : $"À jour ({current}). / Already up to date ({current})."
+                };
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Never let unexpected failures bubble as unhandled — UI/IPC stay alive.
+            return FeedError(current, resolved,
+                "Échec de la vérification des mises à jour. / Update check failed. " +
+                Truncate(ex.Message, 160));
         }
     }
 
@@ -131,4 +171,11 @@ public sealed class UpdateChecker : IUpdateChecker
             CurrentVersion = current,
             Message = message
         };
+
+    private static string Truncate(string message, int max)
+    {
+        if (string.IsNullOrEmpty(message) || message.Length <= max)
+            return message;
+        return message[..max] + "…";
+    }
 }
