@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Paths;
+using DnsBlocker.Core.Stats;
 using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.Core.Ipc;
@@ -37,6 +38,18 @@ public sealed class IpcClient : IAsyncDisposable
         InvokeAsync<StatsSnapshot>(
             IpcProtocol.MethodGetStats,
             new GetStatsParams { Hours = hours, TopN = topN },
+            cancellationToken);
+
+    public Task<EnableStatsCollectionResult> EnableStatsCollectionAsync(CancellationToken cancellationToken = default) =>
+        InvokeAsync<EnableStatsCollectionResult>(IpcProtocol.MethodEnableStatsCollection, null, cancellationToken);
+
+    public Task<BlockTestResult> TestDnsBlockAsync(
+        string? domain = null,
+        string? target = null,
+        CancellationToken cancellationToken = default) =>
+        InvokeAsync<BlockTestResult>(
+            IpcProtocol.MethodTestDnsBlock,
+            new BlockTestRequest { Domain = domain, Target = target },
             cancellationToken);
 
     public Task<TargetPolicyStatusResult> GetTargetPolicyStatusAsync(CancellationToken cancellationToken = default) =>

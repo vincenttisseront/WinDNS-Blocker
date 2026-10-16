@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DnsBlocker.Core.Models;
+using DnsBlocker.Core.Stats;
 using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.Core.Ipc;
@@ -20,6 +21,8 @@ public static class IpcProtocol
     public const string MethodApplyNow = "ApplyNow";
     public const string MethodSearchDomains = "SearchDomains";
     public const string MethodGetStats = "GetStats";
+    public const string MethodEnableStatsCollection = "EnableStatsCollection";
+    public const string MethodTestDnsBlock = "TestDnsBlock";
     public const string MethodGetTargetPolicyStatus = "GetTargetPolicyStatus";
     public const string MethodGetAppVersion = "GetAppVersion";
     public const string MethodCheckForUpdates = "CheckForUpdates";

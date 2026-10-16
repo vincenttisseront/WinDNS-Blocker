@@ -32,8 +32,11 @@ public sealed class AppConfig
 
     public List<string> DnsTargets { get; set; } = ["localhost"];
 
-    /// <summary>DENY or IGNORE</summary>
-    public string PolicyAction { get; set; } = "DENY";
+    /// <summary>
+    /// DENY (REFUSED) or IGNORE (drop). Default IGNORE matches Microsoft blackhole examples
+    /// and reduces stub failover to a secondary public DNS after REFUSED.
+    /// </summary>
+    public string PolicyAction { get; set; } = "IGNORE";
 
     public int ChunkSize { get; set; } = 1000;
 

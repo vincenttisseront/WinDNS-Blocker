@@ -14,6 +14,8 @@
   <sys:String x:Key="Btn.PrepareTarget">Prepare a target (WinRM)…</sys:String>
   <sys:String x:Key="Btn.Search">Search</sys:String>
   <sys:String x:Key="Btn.Load">Load</sys:String>
+  <sys:String x:Key="Btn.EnableStats">Enable collection on DNS targets</sys:String>
+  <sys:String x:Key="Btn.TestBlock">Test blocking</sys:String>
   <sys:String x:Key="Btn.Back">Back</sys:String>
   <sys:String x:Key="Btn.Next">Next</sys:String>
   <sys:String x:Key="Btn.Skip">Skip</sys:String>
@@ -35,7 +37,7 @@
   <sys:String x:Key="Tab.Stats">Stats</sys:String>
   <sys:String x:Key="Status.Connecting">Connecting to service…</sys:String>
   <sys:String x:Key="Status.LastSyncTitle">Last sync (hub → DNS push)</sys:String>
-  <sys:String x:Key="Status.SucceededHint">A « Succeeded » status means the hub pushed chunks — not that policies are still present/enabled on the server.</sys:String>
+  <sys:String x:Key="Status.SucceededHint">A « Succeeded » status means the hub pushed chunks — not that policies are still present/enabled on the server. QRP lives on the farm targets (e.g. windc05), not on the hub. nslookup against ::1 / windc04 will not show blocks — use « Test blocking » (Resolve against the target) or: nslookup beeg.com windc05.ar-systems.fr</sys:String>
   <sys:String x:Key="Status.Col.Server">Server</sys:String>
   <sys:String x:Key="Status.Col.SyncStatus">Sync status</sys:String>
   <sys:String x:Key="Status.Col.PoliciesSync">Policies (sync)</sys:String>
@@ -48,6 +50,8 @@
   <sys:String x:Key="Status.Col.Enabled">Enabled</sys:String>
   <sys:String x:Key="Status.Col.LastSync">Sync (last)</sys:String>
   <sys:String x:Key="Status.Col.ProbeError">Probe error</sys:String>
+  <sys:String x:Key="Status.BlockTestTitle">Blocking verification</sys:String>
+  <sys:String x:Key="Status.BlockTestHint">Resolve a blocklisted domain against the DNS target (e.g. windc05). Leave empty to pick a sample from the active list. Client DNS must be that server only (no DoH / 8.8.8.8).</sys:String>
   <sys:String x:Key="Status.ActionLog">Action log (Status)</sys:String>
   <sys:String x:Key="Cfg.SourcesTitle">List sources</sys:String>
   <sys:String x:Key="Cfg.BlocklistsUrl">blocklists.txt URL (list of lists)</sys:String>
@@ -64,7 +68,7 @@
   <sys:String x:Key="Cfg.ChunkSize">FQDN packet size</sys:String>
   <sys:String x:Key="Cfg.Parallel">Target parallelism</sys:String>
   <sys:String x:Key="Cfg.ScheduleHour">Daily sync time (local)</sys:String>
-  <sys:String x:Key="Cfg.EnableStats">Enable stats collection (DNS ETW)</sys:String>
+  <sys:String x:Key="Cfg.EnableStats">Enable stats collection (remote DNS analytical + ETW)</sys:String>
   <sys:String x:Key="Cfg.UpdatesTitle">Application updates</sys:String>
   <sys:String x:Key="Cfg.UpdateFeedUrl">version.json feed URL</sys:String>
   <sys:String x:Key="Cfg.UpdateFeedDefaultHint">Default: GitHub Releases latest (…/releases/latest/download/version.json). Clear the field to disable checks.</sys:String>
@@ -83,6 +87,7 @@
   <sys:String x:Key="Logs.Hint">UI action journal (and service logs). File: %ProgramData%\DnsBlocker\logs\ui-actions.log</sys:String>
   <sys:String x:Key="Stats.Period">Period (hours):</sys:String>
   <sys:String x:Key="Stats.TopN">Top N:</sys:String>
+  <sys:String x:Key="Stats.CollectionHint">Hub on windc04 cannot see queries hitting windc05 unless remote analytical logging is enabled. Click Enable, set the phone DNS to windc05.ar-systems.fr, browse, then Load.</sys:String>
   <sys:String x:Key="Stats.YoutubeCaveat">Important limit: YouTube ads often bypass pure DNS blocking (same hosts as the video CDN). The tops below help verify the hub records queries / list domains — not that mobile ads are gone.</sys:String>
   <sys:String x:Key="Stats.TopQueried">Top called domains</sys:String>
   <sys:String x:Key="Stats.TopBlocked">Top blocked domains</sys:String>

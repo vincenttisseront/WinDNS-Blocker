@@ -214,23 +214,166 @@ public sealed class HubRuntime
         var to = DateTimeOffset.UtcNow;
         var from = to.AddHours(-hours);
         var snap = _state.GetStats(from, to, topN);
-        if (!_stats.IsEnabled && snap.Message is null)
+        var diagnosis = BuildStatsEmptyDiagnosis(snap.TotalQueries);
+        if (diagnosis is null)
+            return snap;
+
+        return new StatsSnapshot
         {
-            return new StatsSnapshot
+            FromUtc = snap.FromUtc,
+            ToUtc = snap.ToUtc,
+            TotalQueries = snap.TotalQueries,
+            BlockedQueries = snap.BlockedQueries,
+            TopN = snap.TopN,
+            TopQueriedDomains = snap.TopQueriedDomains,
+            TopBlockedDomains = snap.TopBlockedDomains,
+            TopClients = snap.TopClients,
+            Message = diagnosis
+        };
+    }
+
+    /// <summary>
+    /// Turns on hub stats collection and enables Microsoft-Windows-DNSServer/Analytical on each DNS target.
+    /// </summary>
+    public async Task<EnableStatsCollectionResult> EnableStatsCollectionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var cfg = GetConfig();
+        cfg.EnableStatsCollection = true;
+        SetConfig(cfg);
+
+        _logs.Write($"Stats: enabling analytical logging on {cfg.DnsTargets.Count} target(s)");
+        var result = await _stats.EnableOnTargetsAsync(cfg.DnsTargets, cancellationToken).ConfigureAwait(false);
+        foreach (var t in result.Targets)
+        {
+            _logs.Write(t.Ok
+                ? $"Stats analytical OK: {t.Target} — {t.Message}"
+                : $"Stats analytical FAIL: {t.Target} — {t.Message}");
+        }
+
+        // Immediate poll so Load can show data after the first queries arrive.
+        try
+        {
+            await _stats.PollTargetsAsync(cfg.DnsTargets, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logs.Write($"Stats initial poll: {ex.Message}");
+        }
+
+        result = new EnableStatsCollectionResult
+        {
+            StatsEnabled = true,
+            Message = _stats.Message,
+            Targets = _stats.LastTargetStatus.ToList()
+        };
+        return result;
+    }
+
+    public async Task PollStatsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_stats.IsEnabled)
+            return;
+
+        var cfg = GetConfig();
+        if (cfg.DnsTargets.Count == 0)
+            return;
+
+        var results = await _stats.PollTargetsAsync(cfg.DnsTargets, cancellationToken).ConfigureAwait(false);
+        var ingested = results.Sum(r => r.EventsIngested);
+        if (ingested > 0)
+            _logs.Write($"Stats poll: ingested {ingested} event(s) from {results.Count} target(s)");
+    }
+
+    public async Task<BlockTestResult> TestDnsBlockAsync(
+        string? domain,
+        string? target,
+        CancellationToken cancellationToken = default)
+    {
+        var cfg = GetConfig();
+        var dnsTarget = string.IsNullOrWhiteSpace(target)
+            ? cfg.DnsTargets.FirstOrDefault()
+            : target.Trim();
+        if (string.IsNullOrWhiteSpace(dnsTarget))
+        {
+            return new BlockTestResult
             {
-                FromUtc = snap.FromUtc,
-                ToUtc = snap.ToUtc,
-                TotalQueries = snap.TotalQueries,
-                BlockedQueries = snap.BlockedQueries,
-                TopN = snap.TopN,
-                TopQueriedDomains = snap.TopQueriedDomains,
-                TopBlockedDomains = snap.TopBlockedDomains,
-                TopClients = snap.TopClients,
-                Message = _stats.Message
+                Target = "",
+                Domain = domain ?? "",
+                InBlocklist = false,
+                ProbeOk = false,
+                AppearsBlocked = false,
+                Error = "No DNS target configured.",
+                Guidance = "Add windc05.ar-systems.fr (or your DNS farm host) under Configuration."
             };
         }
 
-        return snap;
+        var name = string.IsNullOrWhiteSpace(domain)
+            ? _state.PickSampleBlockedDomain()
+            : domain.Trim().Trim('.').ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return new BlockTestResult
+            {
+                Target = dnsTarget,
+                Domain = "",
+                InBlocklist = false,
+                ProbeOk = false,
+                AppearsBlocked = false,
+                Error = "No domain to test — sync a blocklist first or enter a domain.",
+                Guidance = "Run Update now, then test a domain that appears under Domains."
+            };
+        }
+
+        var inList = _state.IsBlocked(name);
+        _logs.Write($"Block test: {name} via {dnsTarget} (in blocklist={inList})");
+        var result = await _stats.TestBlockAsync(dnsTarget, name, inList, cancellationToken).ConfigureAwait(false);
+        _logs.Write(
+            $"Block test result: {result.Domain} on {result.Target} — " +
+            $"blocked={result.AppearsBlocked}, summary={result.ResolutionSummary ?? result.Error}");
+        return result;
+    }
+
+    private string? BuildStatsEmptyDiagnosis(long totalQueries)
+    {
+        if (totalQueries > 0)
+            return null;
+
+        var cfg = GetConfig();
+        var parts = new List<string>();
+
+        if (!cfg.EnableStatsCollection || !_stats.IsEnabled)
+        {
+            parts.Add("Collector OFF — use Stats → « Enable collection on DNS targets » (or Configuration checkbox + Save).");
+        }
+        else
+        {
+            parts.Add("Collector ON — " + _stats.Message);
+        }
+
+        if (cfg.DnsTargets.Count == 0)
+            parts.Add("No DNS targets configured.");
+        else
+            parts.Add("Targets: " + string.Join(", ", cfg.DnsTargets) + ".");
+
+        var meta = _state.ListStatsIngestMeta();
+        if (meta.Count == 0 && _stats.IsEnabled)
+            parts.Add("Analytical logging not enabled yet on targets — click Enable collection.");
+        foreach (var m in meta)
+        {
+            if (!string.IsNullOrWhiteSpace(m.LastError))
+                parts.Add($"{m.Target}: ingest error — {m.LastError}");
+            else if (!m.AnalyticalEnabled)
+                parts.Add($"{m.Target}: analytical channel not confirmed enabled.");
+            else if (m.LastEventCount == 0 && m.LastEventUtc is null)
+                parts.Add($"{m.Target}: analytical on, but no query events seen.");
+        }
+
+        parts.Add(
+            "Clients (phone/PC) must use a farm DNS as their resolver (e.g. windc05.ar-systems.fr). " +
+            "Hub host windc04 alone does not receive those queries. Disable DoH / private DNS on the client.");
+
+        return string.Join(" ", parts);
     }
 
     public DateTimeOffset ComputeNextScheduledUtc(DateTimeOffset nowLocal)
@@ -441,6 +584,7 @@ public sealed class HubRuntime
         UpdateFeedUrl = c.UpdateFeedUrl,
         CheckUpdatesOnStartup = c.CheckUpdatesOnStartup,
         AutoInstallUpdates = c.AutoInstallUpdates,
-        SetupWizardCompleted = c.SetupWizardCompleted
+        SetupWizardCompleted = c.SetupWizardCompleted,
+        UiLanguage = c.UiLanguage
     };
 }

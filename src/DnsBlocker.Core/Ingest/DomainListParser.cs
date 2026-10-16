@@ -136,6 +136,32 @@ public static partial class DomainListParser
             .ToList();
     }
 
+    /// <summary>
+    /// Windows DNS QRP <c>EQ,*.beeg.com</c> matches subdomains only — not the apex
+    /// <c>beeg.com</c>. For every <c>*.apex</c> entry, also include the bare apex so
+    /// nslookup/Resolve of the registrable name is covered.
+    /// </summary>
+    public static HashSet<string> EnsureApexForWildcards(IEnumerable<string> domains)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in domains)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+
+            var domain = raw.Trim().Trim('.').ToLowerInvariant();
+            result.Add(domain);
+            if (domain.StartsWith("*.", StringComparison.Ordinal) && domain.Length > 2)
+            {
+                var apex = domain[2..];
+                if (TryNormalizeDomain(apex, out var normalizedApex))
+                    result.Add(normalizedApex);
+            }
+        }
+
+        return result;
+    }
+
     public static HashSet<string> ApplyWhitelist(IEnumerable<string> blocked, IEnumerable<string> whitelist)
     {
         var wl = new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase);

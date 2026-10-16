@@ -18,11 +18,14 @@ public class PowerShellDnsPolicyProviderTests
         Assert.Contains("DnsBlocker_0001", script, StringComparison.Ordinal);
         Assert.Contains("DnsBlocker_0002", script, StringComparison.Ordinal);
         Assert.Contains("windc05.ar-systems.fr", script, StringComparison.Ordinal);
+        Assert.Contains("Clear-DnsServerCache", script, StringComparison.Ordinal);
 
         var removeIdx = script.IndexOf("Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix", StringComparison.Ordinal);
         var addIdx = script.IndexOf("Add-DnsBlockerPolicy -Computer $computer -Name $name", StringComparison.Ordinal);
+        var cacheIdx = script.IndexOf("Clear-DnsServerCache", StringComparison.Ordinal);
         Assert.True(removeIdx >= 0);
         Assert.True(addIdx > removeIdx, "Clean replace must remove all DnsBlocker_* before recreating chunks.");
+        Assert.True(cacheIdx > addIdx, "DNS cache clear must run after policy recreate.");
     }
 
     [Fact]

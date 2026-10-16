@@ -121,6 +121,21 @@ public sealed class IpcServer
                     return IpcResponse.Success(request.Id, _runtime.GetStats(p.Hours, p.TopN));
                 }
 
+                case IpcProtocol.MethodEnableStatsCollection:
+                {
+                    var result = await _runtime.EnableStatsCollectionAsync(cancellationToken).ConfigureAwait(false);
+                    return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodTestDnsBlock:
+                {
+                    var p = request.Params?.Deserialize<DnsBlocker.Core.Stats.BlockTestRequest>(IpcProtocol.JsonOptions)
+                            ?? new DnsBlocker.Core.Stats.BlockTestRequest();
+                    var result = await _runtime.TestDnsBlockAsync(p.Domain, p.Target, cancellationToken)
+                        .ConfigureAwait(false);
+                    return IpcResponse.Success(request.Id, result);
+                }
+
                 case IpcProtocol.MethodGetTargetPolicyStatus:
                 {
                     var result = await _runtime.GetTargetPolicyStatusAsync(cancellationToken).ConfigureAwait(false);

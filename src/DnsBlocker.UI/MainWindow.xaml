@@ -95,6 +95,15 @@
                 <DataGridTextColumn Header="{DynamicResource Status.Col.ProbeError}" Binding="{Binding ProbeError}" Width="2*"/>
               </DataGrid.Columns>
             </DataGrid>
+
+            <TextBlock Text="{DynamicResource Status.BlockTestTitle}" FontWeight="SemiBold" Margin="0,8,0,4"/>
+            <TextBlock Text="{DynamicResource Status.BlockTestHint}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+              <TextBox x:Name="BlockTestDomainBox" Width="280" Margin="0,0,8,0"/>
+              <Button x:Name="BlockTestButton" Content="{DynamicResource Btn.TestBlock}" Click="TestBlock_Click"/>
+            </StackPanel>
+            <TextBlock x:Name="BlockTestResultText" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
             <TextBlock Text="{DynamicResource Status.ActionLog}" FontWeight="SemiBold" Margin="0,8,0,4"/>
             <TextBox x:Name="StatusActionLogBox" IsReadOnly="True" AcceptsReturn="True" Height="90"
                      VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
@@ -253,6 +262,11 @@
           <StackPanel>
             <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
               <StackPanel>
+                <TextBlock Text="{DynamicResource Stats.CollectionHint}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                  <Button x:Name="EnableStatsButton" Content="{DynamicResource Btn.EnableStats}" Click="EnableStats_Click" Margin="0,0,8,0"/>
+                  <TextBlock x:Name="StatsCollectionStatus" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                </StackPanel>
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="{DynamicResource Stats.Period}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                   <TextBox x:Name="StatsHoursBox" Width="60" Text="24" Margin="0,0,8,0"/>

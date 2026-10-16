@@ -63,6 +63,7 @@ try
         return new MockTargetPrepRunner();
     });
     builder.Services.AddSingleton<SyncEngine>();
+    builder.Services.AddSingleton<DnsAnalyticalLogClient>();
     builder.Services.AddSingleton<DnsStatsCollector>();
     builder.Services.AddSingleton<IUpdateChecker, UpdateChecker>();
     builder.Services.AddSingleton<UpdateInstaller>();

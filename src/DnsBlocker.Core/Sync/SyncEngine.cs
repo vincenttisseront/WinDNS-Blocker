@@ -52,16 +52,20 @@ public sealed class SyncEngine
                 config.ExtraWhitelistUrls,
                 cancellationToken).ConfigureAwait(false);
 
-            result.DomainCount = ingest.Domains.Count;
             result.WhitelistCount = ingest.WhitelistCount;
             result.SourceListCount = ingest.SourceListCount;
 
             if (ingest.Errors.Count > 0)
                 _logger.LogWarning("Ingest completed with {Count} source errors", ingest.Errors.Count);
 
-            _state.ReplaceDomains(ingest.Domains);
-            var chunks = DomainListParser.Chunk(ingest.Domains, Math.Max(1, config.ChunkSize));
-            _logger.LogInformation("Prepared {Domains} domains in {Chunks} policy chunks", ingest.Domains.Count, chunks.Count);
+            // QRP EQ,*.apex does not match apex — expand so beeg.com is blocked when *.beeg.com is listed.
+            var domainsForQrp = DomainListParser.EnsureApexForWildcards(ingest.Domains);
+            result.DomainCount = domainsForQrp.Count;
+            _state.ReplaceDomains(domainsForQrp);
+            var chunks = DomainListParser.Chunk(domainsForQrp, Math.Max(1, config.ChunkSize));
+            _logger.LogInformation(
+                "Prepared {Domains} domains ({Expanded} after apex expansion) in {Chunks} policy chunks",
+                ingest.Domains.Count, domainsForQrp.Count, chunks.Count);
 
             var targets = config.DnsTargets
                 .Where(t => !string.IsNullOrWhiteSpace(t))

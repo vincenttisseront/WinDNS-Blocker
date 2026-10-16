@@ -477,6 +477,83 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void EnableStats_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await RunBusyAsync(Loc.T("Main.Busy.EnableStats"), async () =>
+            {
+                _journal.Write(Loc.T("Main.Journal.EnableStats"));
+                var result = await _client.EnableStatsCollectionAsync().ConfigureAwait(true);
+                StatsCheck.IsChecked = true;
+                StatsCollectionStatus.Text = result.Message;
+                foreach (var t in result.Targets)
+                {
+                    _journal.Write(t.Ok
+                        ? Loc.F("Main.Journal.EnableStatsDone", $"{t.Target}: {t.Message}")
+                        : Loc.F("Main.Journal.EnableStatsError", $"{t.Target}: {t.Message}"));
+                }
+
+                _journal.Write(Loc.F("Main.Journal.EnableStatsDone", result.Message));
+                if (_config is not null)
+                    _config.EnableStatsCollection = true;
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _journal.Write(Loc.F("Main.Journal.EnableStatsError", ex.Message));
+            StatsCollectionStatus.Text = ex.Message;
+            MessageBox.Show(ex.Message, Loc.T("Main.StatsErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+            RefreshLogsView();
+        }
+    }
+
+    private async void TestBlock_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await RunBusyAsync(Loc.T("Main.Busy.TestBlock"), async () =>
+            {
+                var domain = BlockTestDomainBox.Text.Trim();
+                if (domain.StartsWith("*.", StringComparison.Ordinal))
+                    domain = domain[2..];
+
+                var target = _config?.DnsTargets.FirstOrDefault();
+                var label = string.IsNullOrWhiteSpace(domain) ? "(sample)" : domain;
+                _journal.Write(Loc.F("Main.Journal.TestBlock", $"{label} → {target ?? "?"}"));
+                var result = await _client.TestDnsBlockAsync(
+                    string.IsNullOrWhiteSpace(domain) ? null : domain,
+                    target).ConfigureAwait(true);
+
+                BlockTestDomainBox.Text = result.Domain;
+                var yes = Loc.T("Main.BlockTest.Yes");
+                var no = Loc.T("Main.BlockTest.No");
+                var summary = result.ResolutionSummary ?? result.Error ?? "";
+                BlockTestResultText.Text = Loc.F(
+                    "Main.BlockTest.Result",
+                    result.Domain,
+                    result.Target,
+                    summary,
+                    result.InBlocklist ? yes : no,
+                    result.AppearsBlocked ? yes : no,
+                    result.Guidance);
+                _journal.Write(Loc.F(
+                    "Main.Journal.TestBlockDone",
+                    result.Domain,
+                    result.Target,
+                    result.AppearsBlocked ? yes : no,
+                    summary));
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _journal.Write(Loc.F("Main.Journal.TestBlockError", ex.Message));
+            BlockTestResultText.Text = ex.Message;
+            MessageBox.Show(ex.Message, Loc.T("Main.ProbeErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+            RefreshLogsView();
+        }
+    }
+
     private async void LoadStats_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -583,6 +660,9 @@ public partial class MainWindow : Window
                 lastSync,
                 status.StatsEnabled ? Loc.T("Main.Status.StatsOn") : Loc.T("Main.Status.StatsOff"),
                 status.StatsMessage);
+            StatsCollectionStatus.Text = status.StatsEnabled
+                ? Loc.T("Main.Stats.CollectionOn") + " — " + (status.StatsMessage ?? "")
+                : Loc.T("Main.Stats.CollectionOff");
             TargetsGrid.ItemsSource = last?.Targets ?? new List<TargetSyncResult>();
             BindPolicyProbe(status.LastPolicyProbe);
             _lastServiceLogs = status.RecentLogs;
@@ -646,6 +726,18 @@ public partial class MainWindow : Window
         DomainSearchStatus.Text = string.IsNullOrWhiteSpace(query)
             ? Loc.F("Main.Domains.Preview", domains.Count)
             : Loc.F("Main.Domains.Results", domains.Count, query);
+
+        // Prefill Status → Test blocking with a resolvable apex (strip leading *. from wildcards).
+        if (!string.IsNullOrWhiteSpace(query) && domains.Count > 0)
+        {
+            var candidate = domains.FirstOrDefault(d =>
+                d.Equals(query.Trim().Trim('.'), StringComparison.OrdinalIgnoreCase)
+                || d.Equals("*." + query.Trim().Trim('.'), StringComparison.OrdinalIgnoreCase))
+                ?? domains[0];
+            if (candidate.StartsWith("*.", StringComparison.Ordinal))
+                candidate = candidate[2..];
+            BlockTestDomainBox.Text = candidate;
+        }
     }
 
     private void ShowServiceDisconnected(string message, ServiceProbeResult? probe = null)

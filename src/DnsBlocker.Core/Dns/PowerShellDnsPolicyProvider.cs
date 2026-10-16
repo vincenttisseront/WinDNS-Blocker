@@ -168,6 +168,9 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             }
 
             function Add-DnsBlockerPolicy([string]$Computer, [string]$Name, [string]$Action, [string]$Fqdn) {
+              # Server-level QRP (no -ApplyOnRecursion): matches incoming queries before recursion.
+              # DENY → REFUSED; IGNORE → drop (MS blackhole examples). Prefer a single client DNS
+              # so stubs do not fail over to 8.8.8.8 after REFUSED.
               try {
                 Add-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Action $Action -Fqdn $Fqdn -ErrorAction Stop
               } catch {
@@ -214,6 +217,15 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
                 """);
         }
 
+        // Cached answers bypass QRP — clear after replace so new DENY/IGNORE take effect immediately.
+        sb.AppendLine("""
+            try {
+              Clear-DnsServerCache -ComputerName $computer -Force -ErrorAction SilentlyContinue
+              Write-Output 'CACHE_CLEARED'
+            } catch {
+              Write-Output ('CACHE_CLEAR_SKIPPED: ' + $_.Exception.Message)
+            }
+            """);
         sb.AppendLine($"Write-Output 'DONE policies={chunks.Count}'");
 
         return sb.ToString();

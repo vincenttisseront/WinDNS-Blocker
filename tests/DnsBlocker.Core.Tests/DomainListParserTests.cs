@@ -71,6 +71,18 @@ public class DomainListParserTests
     }
 
     [Fact]
+    public void EnsureApexForWildcards_AddsBareApex_ForBeegStyleLists()
+    {
+        var expanded = DomainListParser.EnsureApexForWildcards(["*.beeg.com", "*.cdn.evil.net", "ads.exact.com"]);
+        Assert.Contains("*.beeg.com", expanded);
+        Assert.Contains("beeg.com", expanded);
+        Assert.Contains("*.cdn.evil.net", expanded);
+        Assert.Contains("cdn.evil.net", expanded);
+        Assert.Contains("ads.exact.com", expanded);
+        Assert.DoesNotContain("*.ads.exact.com", expanded);
+    }
+
+    [Fact]
     public void Chunk_SplitsDeterministically()
     {
         var domains = Enumerable.Range(1, 25).Select(i => $"d{i:D2}.example.com");

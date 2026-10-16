@@ -195,15 +195,21 @@ Set `DNSBLOCKER_USE_MOCK=1` to force the in-memory DNS provider (also automatic 
 
 1. **No regex** — Steve Jenkins `regex.txt` cannot be imported into QRP.
 2. **Policy size** — domains are chunked (~1000 FQDN/policy by default). Very large lists may still hit DNS API limits; consider reducing sources or raising operational monitoring.
-3. **Stats** — Phase C uses hub-local DNS analytical ETW (`Microsoft-Windows-DNSServer`) when enabled; without Analytical logging the Stats tab shows an empty/actionable message. Top called/blocked domains come from SQLite `query_events` (ETW or synthetic), not a remote per-DC analytics API. “Blocked” means the query name is on the hub blocklist, not a confirmed QRP DENY on the wire.
+3. **Stats** — When collection is enabled, the hub turns on `Microsoft-Windows-DNSServer/Analytical` on each farm DNS target and polls QUERY_RECEIVED events into SQLite `query_events` (local ETW on the hub alone is not enough when DNS is on another host, e.g. windc05). Load explains why the window is empty (collector off, analytical not enabled, clients not using farm DNS / DoH). “Blocked” in tops means the query name matches the hub blocklist (including `*.apex` / apex expansion).
 4. **YouTube / CDN ads** — many mobile ad requests share the same hostnames as video delivery; pure DNS blocklists often cannot remove YouTube ads. Use **Status → Verify QRP policies** and **Stats** tops to confirm the hub is applying `DnsBlocker_*` policies and seeing queries — not to expect zero ads on phone YouTube.
 5. **Sync ≠ applied** — a successful push records chunk counts in SQLite; live presence/enabled state is verified separately via `Get-DnsServerQueryResolutionPolicy` (IPC `GetTargetPolicyStatus`).
 
-### Verify on a phone (point DNS at the farm)
+### Verify blocking (hub ≠ DNS target)
+
+QRP policies are pushed to **farm targets** (e.g. `windc05.ar-systems.fr`). The hub UI on `windc04` does **not** block `nslookup` against `::1` / localhost — that hits the hub’s own DNS, which has no `DnsBlocker_*` policies.
 
 1. Configure the hub target (e.g. `windc05.ar-systems.fr`) and run **Update now**.
 2. On **Status**, click **Verify QRP policies** — expect `DnsBlocker_*` installed = enabled and matching the last sync count.
-3. On the phone, set DNS to that same Windows DNS (or a resolver that forwards to it), browse, then **Stats → Load** (enable ETW collection on the hub first). Top called/blocked domains should move if the phone really uses that DNS.
+3. On **Status**, use **Test blocking** with a listed domain (e.g. `beeg.com`). The hub runs `Resolve-DnsName -Server <target>`. Expect REFUSED / NXDOMAIN / timeout — not Cloudflare IPs.
+   - Manual check: `nslookup beeg.com windc05.ar-systems.fr`
+4. Sync expands `*.apex` → also include apex (`*.beeg.com` ⇒ `beeg.com`) because Windows QRP `EQ,*.beeg.com` does not match the apex name alone.
+5. On the phone, set DNS to that same Windows DNS only (disable DoH / private DNS). Prefer QRP action **IGNORE** (default) so stubs are less likely to fail over to `8.8.8.8` after REFUSED.
+6. **Stats → Enable collection on DNS targets** (turns on remote `Microsoft-Windows-DNSServer/Analytical` + hub ingest), browse, then **Load**. Top called/blocked populate only for queries that hit the farm DNS.
 
 ## Uninstall
 
