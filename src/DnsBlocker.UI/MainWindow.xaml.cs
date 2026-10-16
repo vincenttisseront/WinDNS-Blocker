@@ -9,6 +9,7 @@ namespace DnsBlocker.UI;
 public partial class MainWindow : Window
 {
     private readonly IpcClient _client = new();
+    private readonly ActionJournal _journal = new();
     private AppConfig? _config;
     private bool _startupUpdateCheckDone;
 
@@ -17,6 +18,26 @@ public partial class MainWindow : Window
         InitializeComponent();
         VersionLabel.Text = "v" + AppVersion.Current;
         Loaded += async (_, _) => await RefreshAsync(checkUpdatesOnStartup: true);
+    }
+
+    private async void TargetWizard_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var prefill = TargetsBox.Text
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(t => !string.Equals(t, "localhost", StringComparison.OrdinalIgnoreCase));
+            var wizard = new TargetSetupWizardWindow(_client, _journal, prefill) { Owner = this };
+            var ok = wizard.ShowDialog() == true;
+            _journal.Write(ok
+                ? $"Wizard cible terminé ({wizard.PreparedHostname})"
+                : "Wizard cible annulé");
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Assistant cible", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
@@ -152,6 +173,21 @@ public partial class MainWindow : Window
             LogsBox.Text = string.Join(Environment.NewLine, status.RecentLogs);
             var domains = await _client.SearchDomainsAsync(DomainSearchBox.Text, 100);
             DomainsList.ItemsSource = domains;
+
+            try
+            {
+                var prepared = await _client.GetPreparedTargetsAsync();
+                PreparedTargetsSummary.Text = prepared.Count == 0
+                    ? "Aucune cible préparée via WinRM. Utilisez « Préparer une cible » pour corriger WIN32 1011 à distance."
+                    : "Cibles préparées : " + string.Join(", ",
+                        prepared.Select(p =>
+                            p.Hostname + (p.Prepared ? " ✓" : "") +
+                            (p.CredentialsStored ? " (creds)" : "")));
+            }
+            catch
+            {
+                PreparedTargetsSummary.Text = "";
+            }
 
             if (checkUpdatesOnStartup && !_startupUpdateCheckDone && _config.CheckUpdatesOnStartup
                 && !string.IsNullOrWhiteSpace(_config.UpdateFeedUrl))

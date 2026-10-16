@@ -1,6 +1,8 @@
 using DnsBlocker.Core.Config;
 using DnsBlocker.Core.Logging;
 using DnsBlocker.Core.Models;
+using DnsBlocker.Core.Security;
+using DnsBlocker.Core.Setup;
 using DnsBlocker.Core.Stats;
 using DnsBlocker.Core.Storage;
 using DnsBlocker.Core.Sync;
@@ -20,6 +22,9 @@ public sealed class HubRuntime
     private readonly DnsStatsCollector _stats;
     private readonly IUpdateChecker _updateChecker;
     private readonly UpdateInstaller _updateInstaller;
+    private readonly ITargetPrepRunner _targetPrep;
+    private readonly SecureCredentialStore _credentials;
+    private readonly PreparedTargetStore _preparedTargets;
     private readonly object _configGate = new();
     private readonly object _updateGate = new();
     private AppConfig _config;
@@ -32,7 +37,10 @@ public sealed class HubRuntime
         FileLogBuffer logs,
         DnsStatsCollector stats,
         IUpdateChecker updateChecker,
-        UpdateInstaller updateInstaller)
+        UpdateInstaller updateInstaller,
+        ITargetPrepRunner targetPrep,
+        SecureCredentialStore credentials,
+        PreparedTargetStore preparedTargets)
     {
         _configStore = configStore;
         _syncEngine = syncEngine;
@@ -41,6 +49,9 @@ public sealed class HubRuntime
         _stats = stats;
         _updateChecker = updateChecker;
         _updateInstaller = updateInstaller;
+        _targetPrep = targetPrep;
+        _credentials = credentials;
+        _preparedTargets = preparedTargets;
         _config = _configStore.Load();
     }
 
@@ -217,6 +228,84 @@ public sealed class HubRuntime
         {
             _logs.Write($"Scheduled update check failed: {ex.Message}");
         }
+    }
+
+    public Task<TargetWinRmTestResult> TestTargetWinRmAsync(
+        TargetWinRmTestRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        _logs.Write($"WinRM test → {request.Hostname} (user={request.Username})");
+        // Never log password
+        return _targetPrep.TestWinRmAsync(request, cancellationToken);
+    }
+
+    public async Task<PrepareDnsTargetResult> PrepareDnsTargetAsync(
+        PrepareDnsTargetRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        _logs.Write($"Préparation DNS cible → {request.Hostname} (user={request.Username}, dnsAdmins={request.AddHubToDnsAdmins})");
+        var result = await _targetPrep.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
+
+        if (result.Ok && result.Target is not null)
+        {
+            if (request.PersistCredentials)
+            {
+                _credentials.Save(request.Hostname, request.Username, request.Password);
+                result.Target.CredentialsStored = true;
+                _logs.Write($"Identifiants stockés (DPAPI) pour {request.Hostname}");
+            }
+            else
+            {
+                result.Target.CredentialsStored = false;
+            }
+
+            _preparedTargets.Upsert(result.Target);
+
+            // Ensure hostname is in DnsTargets farm list
+            var cfg = GetConfig();
+            if (!cfg.DnsTargets.Any(t => t.Equals(request.Hostname.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                cfg.DnsTargets.Add(request.Hostname.Trim());
+                SetConfig(cfg);
+            }
+
+            _logs.Write($"Cible préparée: {request.Hostname} (identité={result.Target.HubIdentityGranted})");
+        }
+        else
+        {
+            _logs.Write($"Préparation échouée pour {request.Hostname}: {result.Message}");
+        }
+
+        // Clear password from request object if caller reuses it (defensive)
+        request.Password = "";
+        return result;
+    }
+
+    public IReadOnlyList<PreparedTargetInfo> GetPreparedTargets()
+    {
+        var list = _preparedTargets.List().Select(t =>
+        {
+            var meta = _credentials.GetMeta(t.Hostname);
+            t.CredentialsStored = meta is not null;
+            if (meta is not null && string.IsNullOrWhiteSpace(t.Username))
+                t.Username = meta.Username;
+            return t;
+        }).ToList();
+        return list;
+    }
+
+    public bool ClearTargetCredentials(string hostname)
+    {
+        _credentials.Delete(hostname);
+        var existing = _preparedTargets.Get(hostname);
+        if (existing is not null)
+        {
+            existing.CredentialsStored = false;
+            _preparedTargets.Upsert(existing);
+        }
+
+        _logs.Write($"Identifiants effacés pour {hostname}");
+        return true;
     }
 
     private static void Normalize(AppConfig config)

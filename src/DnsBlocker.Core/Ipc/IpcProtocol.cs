@@ -23,6 +23,10 @@ public static class IpcProtocol
     public const string MethodGetAppVersion = "GetAppVersion";
     public const string MethodCheckForUpdates = "CheckForUpdates";
     public const string MethodInstallUpdate = "InstallUpdate";
+    public const string MethodTestTargetWinRm = "TestTargetWinRm";
+    public const string MethodPrepareDnsTarget = "PrepareDnsTarget";
+    public const string MethodGetPreparedTargets = "GetPreparedTargets";
+    public const string MethodClearTargetCredentials = "ClearTargetCredentials";
 }
 
 public sealed class IpcRequest
@@ -78,4 +82,9 @@ public sealed class InstallUpdateParams
 public sealed class AppVersionResult
 {
     public string Version { get; set; } = "";
+}
+
+public sealed class ClearTargetCredentialsParams
+{
+    public string Hostname { get; set; } = "";
 }
