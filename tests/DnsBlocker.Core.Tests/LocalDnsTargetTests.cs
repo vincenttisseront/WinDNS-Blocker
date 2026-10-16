@@ -91,6 +91,12 @@ public class LocalDnsTargetTests : IDisposable
             "DnsBlocker_",
             "DENY",
             [["a.example.com"]]);
-        Assert.Contains("$local = $true", script, StringComparison.Ordinal);
+        var manifestLine = script.Split('\n')
+            .Select(l => l.Trim())
+            .First(l => l.StartsWith("# manifest=", StringComparison.Ordinal));
+        var path = manifestLine["# manifest=".Length..].Trim();
+        var manifest = File.ReadAllText(path);
+        Assert.Contains("\"local\":true", manifest, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("windc04.ar-systems.fr", manifest, StringComparison.Ordinal);
     }
 }

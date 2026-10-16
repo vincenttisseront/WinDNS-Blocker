@@ -26,9 +26,11 @@ public sealed class MockDnsPolicyProvider : IDnsPolicyProvider
         string policyNamePrefix,
         string action,
         IReadOnlyList<IReadOnlyList<string>> chunks,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool restartDnsAfterApply = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        _ = restartDnsAfterApply;
 
         if (FailingTargets.Contains(computerName))
             throw new InvalidOperationException($"Mock failure for target '{computerName}'.");
@@ -36,7 +38,7 @@ public sealed class MockDnsPolicyProvider : IDnsPolicyProvider
         var policies = new List<PolicyRecord>();
         for (var i = 0; i < chunks.Count; i++)
         {
-            var name = $"{policyNamePrefix}{(i + 1):D4}";
+            var name = PowerShellDnsPolicyProvider.FormatPolicyName(policyNamePrefix, i + 1);
             policies.Add(new PolicyRecord(name, action, chunks[i].ToList(), IsEnabled: true));
         }
 

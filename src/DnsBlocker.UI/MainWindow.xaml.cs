@@ -349,6 +349,9 @@ public partial class MainWindow : Window
                         : Loc.F("Main.Sync.TargetFail", t.Target, t.Error));
                 }
 
+                if (string.IsNullOrWhiteSpace(BlockTestDomainBox.Text))
+                    BlockTestDomainBox.Text = "beeg.com";
+
                 MessageBox.Show(summary, Loc.T("AppName"), MessageBoxButton.OK,
                     result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
                 await RefreshAsync().ConfigureAwait(true);
@@ -1055,6 +1058,8 @@ public partial class MainWindow : Window
         SearchDomainsButton.IsEnabled = enabled;
         if (VerifyPoliciesButton is not null)
             VerifyPoliciesButton.IsEnabled = enabled;
+        if (BlockTestButton is not null)
+            BlockTestButton.IsEnabled = enabled;
         if (LoadStatsButton is not null)
             LoadStatsButton.IsEnabled = enabled;
     }

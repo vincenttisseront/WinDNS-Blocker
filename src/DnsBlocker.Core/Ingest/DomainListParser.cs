@@ -137,9 +137,70 @@ public static partial class DomainListParser
     }
 
     /// <summary>
-    /// Windows DNS QRP <c>EQ,*.beeg.com</c> matches subdomains only — not the apex
-    /// <c>beeg.com</c>. For every <c>*.apex</c> entry, also include the bare apex so
-    /// nslookup/Resolve of the registrable name is covered.
+    /// Packs domains into FQDN criterion chunks under <paramref name="maxFqdnCriterionChars"/>
+    /// (including leading <c>EQ,</c> and commas). Oversized criteria are a known cause of
+    /// policies that Add successfully but store empty/invalid FQDN criteria and never block.
+    /// </summary>
+    public static IReadOnlyList<IReadOnlyList<string>> ChunkByFqdnBudget(
+        IEnumerable<string> domains,
+        int maxFqdnCriterionChars,
+        int maxDomainsPerChunk = 200)
+    {
+        if (maxFqdnCriterionChars < 32)
+            throw new ArgumentOutOfRangeException(nameof(maxFqdnCriterionChars));
+        if (maxDomainsPerChunk < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxDomainsPerChunk));
+
+        var ordered = domains
+            .Where(d => !string.IsNullOrWhiteSpace(d) && !d.Contains(',', StringComparison.Ordinal))
+            .Select(d => d.Trim().Trim('.').ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var chunks = new List<IReadOnlyList<string>>();
+        var current = new List<string>();
+        var used = 3; // "EQ,"
+
+        foreach (var domain in ordered)
+        {
+            var extra = (current.Count == 0 ? 0 : 1) + domain.Length;
+            if (current.Count >= maxDomainsPerChunk
+                || (current.Count > 0 && used + extra > maxFqdnCriterionChars))
+            {
+                chunks.Add(current);
+                current = [];
+                used = 3;
+                extra = domain.Length;
+            }
+
+            if (3 + domain.Length > maxFqdnCriterionChars)
+            {
+                if (current.Count > 0)
+                {
+                    chunks.Add(current);
+                    current = [];
+                }
+
+                chunks.Add(new List<string> { domain });
+                used = 3;
+                continue;
+            }
+
+            current.Add(domain);
+            used += extra;
+        }
+
+        if (current.Count > 0)
+            chunks.Add(current);
+
+        return chunks;
+    }
+
+    /// <summary>
+    /// Windows DNS QRP <c>EQ,*.beeg.com</c> may not match the apex <c>beeg.com</c> on all
+    /// builds. For every <c>*.apex</c> entry, also include the bare apex so nslookup of the
+    /// registrable name is covered.
     /// </summary>
     public static HashSet<string> EnsureApexForWildcards(IEnumerable<string> domains)
     {
@@ -160,6 +221,54 @@ public static partial class DomainListParser
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Drops exact hostnames already covered by a <c>*.apex</c> wildcard (keeps the wildcard
+    /// and the bare apex). Shrinks multi-million host+OISD merges so QRP policy count stays
+    /// practical without losing coverage.
+    /// </summary>
+    public static HashSet<string> CompactCoveredByWildcards(IEnumerable<string> domains)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in domains)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            set.Add(raw.Trim().Trim('.').ToLowerInvariant());
+        }
+
+        var wildApexes = set
+            .Where(d => d.StartsWith("*.", StringComparison.Ordinal) && d.Length > 2)
+            .Select(d => d[2..])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(a => a.Length)
+            .ToList();
+
+        if (wildApexes.Count == 0)
+            return set;
+
+        var remove = new List<string>();
+        foreach (var domain in set)
+        {
+            if (domain.StartsWith("*.", StringComparison.Ordinal))
+                continue;
+
+            foreach (var apex in wildApexes)
+            {
+                // Keep bare apex (insurance); drop subdomain hosts covered by *.apex.
+                if (domain.EndsWith("." + apex, StringComparison.OrdinalIgnoreCase))
+                {
+                    remove.Add(domain);
+                    break;
+                }
+            }
+        }
+
+        foreach (var d in remove)
+            set.Remove(d);
+
+        return set;
     }
 
     public static HashSet<string> ApplyWhitelist(IEnumerable<string> blocked, IEnumerable<string> whitelist)

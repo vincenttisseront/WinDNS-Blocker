@@ -15,13 +15,13 @@ public class PolicyProbeTests
             "DENY",
             [["ads.example.com"], ["tracker.evil"]]);
 
-        provider.SetPolicyEnabled("windc05.ar-systems.fr", "DnsBlocker_0002", enabled: false);
+        provider.SetPolicyEnabled("windc05.ar-systems.fr", "DnsBlocker_00002", enabled: false);
 
         var policies = await provider.ListPoliciesAsync("windc05.ar-systems.fr", "DnsBlocker_");
         Assert.Equal(2, policies.Count);
         Assert.True(policies[0].IsEnabled);
         Assert.False(policies[1].IsEnabled);
-        Assert.Equal(["DnsBlocker_0001", "DnsBlocker_0002"], await provider.ListPolicyNamesAsync("windc05.ar-systems.fr", "DnsBlocker_"));
+        Assert.Equal(["DnsBlocker_00001", "DnsBlocker_00002"], await provider.ListPolicyNamesAsync("windc05.ar-systems.fr", "DnsBlocker_"));
     }
 
     [Fact]

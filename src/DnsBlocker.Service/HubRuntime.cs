@@ -111,6 +111,32 @@ public sealed class HubRuntime
                 : $"Target FAIL: {t.Target} — {t.Error}");
         }
 
+        // Succeeded ≠ live Enabled policies — always probe Get-DnsServerQueryResolutionPolicy after sync.
+        try
+        {
+            var probe = await GetTargetPolicyStatusAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var row in probe.Targets)
+            {
+                _logs.Write(row.ProbeOk
+                    ? $"QRP probe after sync: {row.Target} — installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, sync={row.LastSyncPolicyCount} → {row.AppliedLabel}"
+                    : $"QRP probe after sync FAIL: {row.Target} — {row.ProbeError}");
+
+                if (row.ProbeOk
+                    && row.LastSyncStatus == TargetSyncStatus.Succeeded
+                    && !row.AppliedOk)
+                {
+                    _logs.Write(
+                        $"WARNING: sync Succeeded for {row.Target} but live Enabled count does not match " +
+                        $"(enabled={row.LiveEnabledCount}, installed={row.LivePolicyCount}, sync={row.LastSyncPolicyCount}). " +
+                        "Blocking will not work until policies are present and Enabled.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logs.Write($"QRP probe after sync error: {ex.Message}");
+        }
+
         return result;
     }
 
@@ -666,7 +692,7 @@ public sealed class HubRuntime
 
     private static void Normalize(AppConfig config)
     {
-        config.ChunkSize = Math.Clamp(config.ChunkSize, 1, 5000);
+        config.ChunkSize = Math.Clamp(config.ChunkSize, 1, 250);
         config.MaxParallelTargets = Math.Clamp(config.MaxParallelTargets, 1, 8);
         config.ScheduledHour = Math.Clamp(config.ScheduledHour, 0, 23);
         config.ScheduledMinute = Math.Clamp(config.ScheduledMinute, 0, 59);
@@ -697,6 +723,7 @@ public sealed class HubRuntime
         PolicyAction = c.PolicyAction,
         ChunkSize = c.ChunkSize,
         MaxParallelTargets = c.MaxParallelTargets,
+        RestartDnsAfterPolicySync = c.RestartDnsAfterPolicySync,
         ScheduledHour = c.ScheduledHour,
         ScheduledMinute = c.ScheduledMinute,
         EnableStatsCollection = c.EnableStatsCollection,

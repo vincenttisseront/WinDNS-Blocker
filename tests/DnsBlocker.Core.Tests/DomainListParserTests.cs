@@ -92,4 +92,35 @@ public class DomainListParserTests
         Assert.Equal(10, chunks[1].Count);
         Assert.Equal(5, chunks[2].Count);
     }
+
+    [Fact]
+    public void ChunkByFqdnBudget_RespectsCharLimitAndDomainCap()
+    {
+        var domains = Enumerable.Range(1, 50).Select(i => $"host{i:D3}.blocked.test");
+        var chunks = DomainListParser.ChunkByFqdnBudget(domains, maxFqdnCriterionChars: 120, maxDomainsPerChunk: 10);
+        Assert.True(chunks.Count >= 5);
+        foreach (var chunk in chunks)
+        {
+            Assert.True(chunk.Count <= 10);
+            var fqdn = "EQ," + string.Join(",", chunk);
+            Assert.True(fqdn.Length <= 120, fqdn);
+        }
+    }
+
+    [Fact]
+    public void CompactCoveredByWildcards_DropsHostsUnderWildcard_KeepsApex()
+    {
+        var compacted = DomainListParser.CompactCoveredByWildcards([
+            "*.beeg.com",
+            "beeg.com",
+            "www.beeg.com",
+            "cdn.beeg.com",
+            "ads.other.com"
+        ]);
+        Assert.Contains("*.beeg.com", compacted);
+        Assert.Contains("beeg.com", compacted);
+        Assert.DoesNotContain("www.beeg.com", compacted);
+        Assert.DoesNotContain("cdn.beeg.com", compacted);
+        Assert.Contains("ads.other.com", compacted);
+    }
 }

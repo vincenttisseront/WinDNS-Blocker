@@ -38,9 +38,21 @@ public sealed class AppConfig
     /// </summary>
     public string PolicyAction { get; set; } = "IGNORE";
 
-    public int ChunkSize { get; set; } = 1000;
+    /// <summary>
+    /// Max domains per QRP policy (further limited by FQDN criterion char budget ~8k).
+    /// Default 200 — 1000-domain chunks produced ~19k-char criteria that Add could accept
+    /// while leaving empty/ineffective FQDN criteria (Succeeded ≠ block).
+    /// </summary>
+    public int ChunkSize { get; set; } = 200;
 
     public int MaxParallelTargets { get; set; } = 2;
+
+    /// <summary>
+    /// After replacing QRP policies, restart the Windows DNS Server service so criteria
+    /// are loaded into the query path (remote/local Adds can otherwise leave policies
+    /// present but inert until Restart-Service DNS).
+    /// </summary>
+    public bool RestartDnsAfterPolicySync { get; set; } = true;
 
     /// <summary>Daily sync hour (local time), 0-23.</summary>
     public int ScheduledHour { get; set; } = 2;

@@ -59,14 +59,25 @@ public sealed class SyncEngine
             if (ingest.Errors.Count > 0)
                 _logger.LogWarning("Ingest completed with {Count} source errors", ingest.Errors.Count);
 
-            // QRP EQ,*.apex does not match apex — expand so beeg.com is blocked when *.beeg.com is listed.
-            var domainsForQrp = DomainListParser.EnsureApexForWildcards(ingest.Domains);
-            result.DomainCount = domainsForQrp.Count;
-            _state.ReplaceDomains(domainsForQrp);
-            var chunks = DomainListParser.Chunk(domainsForQrp, Math.Max(1, config.ChunkSize));
+            // QRP EQ,*.apex may not match apex on all builds — expand bare apex.
+            var expanded = DomainListParser.EnsureApexForWildcards(ingest.Domains);
+            result.DomainCount = expanded.Count;
+            _state.ReplaceDomains(expanded);
+
+            // Drop hostnames already covered by *.apex wildcards before chunking (keeps apex).
+            var forQrp = DomainListParser.CompactCoveredByWildcards(expanded);
+            var chunks = DomainListParser.ChunkByFqdnBudget(
+                forQrp,
+                PowerShellDnsPolicyProvider.MaxFqdnCriterionChars,
+                Math.Max(1, config.ChunkSize));
             _logger.LogInformation(
-                "Prepared {Domains} domains ({Expanded} after apex expansion) in {Chunks} policy chunks",
-                ingest.Domains.Count, domainsForQrp.Count, chunks.Count);
+                "Prepared {Ingested} ingested → {Expanded} after apex → {ForQrp} after wildcard compact in {Chunks} QRP chunks (budget {Budget} chars, max {MaxPerChunk}/policy)",
+                ingest.Domains.Count,
+                expanded.Count,
+                forQrp.Count,
+                chunks.Count,
+                PowerShellDnsPolicyProvider.MaxFqdnCriterionChars,
+                Math.Max(1, config.ChunkSize));
 
             var targets = config.DnsTargets
                 .Where(t => !string.IsNullOrWhiteSpace(t))
@@ -106,7 +117,8 @@ public sealed class SyncEngine
                         config.PolicyNamePrefix,
                         config.PolicyAction,
                         chunks,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken,
+                        config.RestartDnsAfterPolicySync).ConfigureAwait(false);
 
                     targetResult.Status = TargetSyncStatus.Succeeded;
                     targetResult.PolicyCount = chunks.Count;

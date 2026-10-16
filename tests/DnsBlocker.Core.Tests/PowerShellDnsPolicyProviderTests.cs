@@ -5,49 +5,61 @@ namespace DnsBlocker.Core.Tests;
 public class PowerShellDnsPolicyProviderTests
 {
     [Fact]
-    public void BuildApplyScript_RemovesAllPrefixedPoliciesBeforeAdd()
+    public void BuildApplyScript_UsesManifestRunner_WithProcessingOrderRestartAndVerify()
     {
         var script = PowerShellDnsPolicyProvider.BuildApplyScript(
             "windc05.ar-systems.fr",
             "DnsBlocker_",
-            "DENY",
-            [["ads.example.com"], ["tracker.evil"]]);
+            "IGNORE",
+            [["ads.example.com"], ["tracker.evil"]],
+            restartDnsAfterApply: true);
 
         Assert.Contains("Remove-DnsBlockerPolicies", script, StringComparison.Ordinal);
         Assert.Contains("Add-DnsBlockerPolicy", script, StringComparison.Ordinal);
-        Assert.Contains("DnsBlocker_0001", script, StringComparison.Ordinal);
-        Assert.Contains("DnsBlocker_0002", script, StringComparison.Ordinal);
-        Assert.Contains("windc05.ar-systems.fr", script, StringComparison.Ordinal);
+        Assert.Contains("-ProcessingOrder", script, StringComparison.Ordinal);
+        Assert.Contains("-PassThru", script, StringComparison.Ordinal);
+        Assert.Contains("Test-DnsBlockerHasFqdnCriteria", script, StringComparison.Ordinal);
         Assert.Contains("Clear-DnsServerCache", script, StringComparison.Ordinal);
-
-        var removeIdx = script.IndexOf(
-            "Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix -Local $local",
-            StringComparison.Ordinal);
-        var addIdx = script.IndexOf(
-            "Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn -Local $local",
-            StringComparison.Ordinal);
-        var cacheIdx = script.IndexOf("Clear-DnsServerCache", StringComparison.Ordinal);
-        Assert.True(removeIdx >= 0);
-        Assert.True(addIdx > removeIdx, "Clean replace must remove all DnsBlocker_* before recreating chunks.");
-        Assert.True(cacheIdx > addIdx, "DNS cache clear must run after policy recreate.");
-        Assert.Contains("$local = $false", script, StringComparison.Ordinal);
+        Assert.Contains("Restart-DnsBlockerDnsServer", script, StringComparison.Ordinal);
+        Assert.Contains("VERIFY installed=", script, StringComparison.Ordinal);
+        Assert.Contains("SMOKE_FAIL", script, StringComparison.Ordinal);
         Assert.Contains("Add-DnsServerQueryResolutionPolicy -ComputerName $Computer", script, StringComparison.Ordinal);
+        var manifest = ReadManifestFromScriptComment(script);
+        Assert.Contains("\"local\":false", manifest, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("windc05.ar-systems.fr", manifest, StringComparison.Ordinal);
+        Assert.Contains("IGNORE", manifest, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void BuildApplyScript_LocalTarget_SetsLocalFlagAndLocalCmdletForms()
+    public void BuildApplyScript_LocalTarget_SetsLocalFlagAndRestartsService()
     {
         var script = PowerShellDnsPolicyProvider.BuildApplyScript(
             "localhost",
             "DnsBlocker_",
             "IGNORE",
-            [["ads.example.com"]]);
+            [["ads.example.com"]],
+            restartDnsAfterApply: true);
 
-        Assert.Contains("$local = $true", script, StringComparison.Ordinal);
-        Assert.Contains("Add-DnsServerQueryResolutionPolicy -Name $Name -Action $Action -Fqdn $Fqdn", script, StringComparison.Ordinal);
-        Assert.Contains("Remove-DnsServerQueryResolutionPolicy -Name $p.Name -Force", script, StringComparison.Ordinal);
+        Assert.Contains("Add-DnsServerQueryResolutionPolicy -Name $Name -Action $Action -Fqdn $Fqdn -ProcessingOrder $Order -PassThru", script, StringComparison.Ordinal);
+        Assert.Contains("Restart-Service -Name 'DNS' -Force", script, StringComparison.Ordinal);
         Assert.Contains("Clear-DnsServerCache -Force -ErrorAction SilentlyContinue", script, StringComparison.Ordinal);
-        Assert.Contains("Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn -Local $local", script, StringComparison.Ordinal);
+        var manifest = ReadManifestFromScriptComment(script);
+        Assert.Contains("\"local\":true", manifest, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"restartDns\":true", manifest, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildApplyScript_CanSkipDnsRestart()
+    {
+        var script = PowerShellDnsPolicyProvider.BuildApplyScript(
+            "localhost",
+            "DnsBlocker_",
+            "DENY",
+            [["a.example.com"]],
+            restartDnsAfterApply: false);
+
+        Assert.Contains("DNS_RESTART_SKIPPED", script, StringComparison.Ordinal);
+        Assert.Contains("$restartDns = [bool]$manifest.restartDns", script, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -63,11 +75,72 @@ public class PowerShellDnsPolicyProviderTests
         Assert.Contains("9971", script, StringComparison.Ordinal);
         Assert.Contains("already exists", script, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DNS_ERROR_POLICY_ALREADY_EXISTS", script, StringComparison.Ordinal);
-        // On already-exists: Remove then Add again for that chunk
-        Assert.Contains(
-            "Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Force -ErrorAction SilentlyContinue",
-            script,
-            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FormatPolicyName_UsesD5()
+    {
+        Assert.Equal("DnsBlocker_00001", PowerShellDnsPolicyProvider.FormatPolicyName("DnsBlocker_", 1));
+        Assert.Equal("DnsBlocker_10000", PowerShellDnsPolicyProvider.FormatPolicyName("DnsBlocker_", 10000));
+    }
+
+    [Fact]
+    public void PreferSmokeDomain_PrefersBeegWhenPresent()
+    {
+        var smoke = PowerShellDnsPolicyProvider.PreferSmokeDomain([
+            ["aaa.example", "*.beeg.com", "beeg.com"],
+            ["zzz.test"]
+        ]);
+        Assert.Equal("beeg.com", smoke);
+    }
+
+    [Fact]
+    public void NormalizeChunks_RespectsFqdnBudget()
+    {
+        // 100 domains of 40 chars would exceed 8192 if packed naively at 1000/chunk
+        var domains = Enumerable.Range(0, 500)
+            .Select(i => $"very-long-blocked-hostname-{i:D4}.example-blocklist.test")
+            .ToList();
+        var chunks = PowerShellDnsPolicyProvider.NormalizeChunks([domains], PowerShellDnsPolicyProvider.MaxFqdnCriterionChars);
+
+        Assert.True(chunks.Count > 1);
+        foreach (var chunk in chunks)
+        {
+            var fqdn = "EQ," + string.Join(",", chunk);
+            Assert.True(fqdn.Length <= PowerShellDnsPolicyProvider.MaxFqdnCriterionChars,
+                $"Criterion length {fqdn.Length} exceeds budget");
+        }
+    }
+
+    [Fact]
+    public void ValidateApplyOutput_AcceptsMatchingVerifyLine()
+    {
+        PowerShellDnsPolicyProvider.ValidateApplyOutput(
+            "OK added=2\nCACHE_CLEARED\nDNS_RESTARTED\nVERIFY installed=2 enabled=2 expected=2 smoke=OK\nDONE policies=2\n",
+            "windc04",
+            2);
+    }
+
+    [Fact]
+    public void ValidateApplyOutput_ThrowsOnEnabledMismatch()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PowerShellDnsPolicyProvider.ValidateApplyOutput(
+                "VERIFY installed=10 enabled=0 expected=10 smoke=SKIP\n",
+                "windc04",
+                10));
+        Assert.Contains("enabled", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ValidateApplyOutput_ThrowsOnSmokeFail()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PowerShellDnsPolicyProvider.ValidateApplyOutput(
+                "VERIFY installed=1 enabled=1 expected=1 smoke=FAIL\n",
+                "windc04",
+                1));
+        Assert.Contains("smoke", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -108,19 +181,37 @@ public class PowerShellDnsPolicyProviderTests
     }
 
     [Fact]
+    public void EnrichDnsPolicyError_MapsSmokeOrEmptyCriteria()
+    {
+        var enriched = PowerShellDnsPolicyProvider.EnrichDnsPolicyError(
+            "SMOKE_FAIL: beeg.com still resolves", "windc04");
+        Assert.Contains("verification failed", enriched, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("windc04", enriched, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MockProvider_ApplyPolicies_ReplacesPriorChunksIdempotently()
     {
         var provider = new MockDnsPolicyProvider();
-        // Simulate partial prior sync: 3 policies already present
         await provider.ApplyPoliciesAsync("windc05", "DnsBlocker_", "DENY",
             [["a.com"], ["b.com"], ["c.com"]]);
 
-        // Resync with fewer chunks must replace, not accumulate
         await provider.ApplyPoliciesAsync("windc05", "DnsBlocker_", "DENY",
             [["a.com"], ["b.com"]]);
 
         var names = await provider.ListPolicyNamesAsync("windc05", "DnsBlocker_");
-        Assert.Equal(["DnsBlocker_0001", "DnsBlocker_0002"], names);
-        Assert.DoesNotContain(names, n => n.EndsWith("0003", StringComparison.Ordinal));
+        Assert.Equal(["DnsBlocker_00001", "DnsBlocker_00002"], names);
+        Assert.DoesNotContain(names, n => n.EndsWith("00003", StringComparison.Ordinal));
+    }
+
+    private static string ReadManifestFromScriptComment(string script)
+    {
+        var line = script.Split('\n')
+            .Select(l => l.Trim())
+            .FirstOrDefault(l => l.StartsWith("# manifest=", StringComparison.Ordinal));
+        Assert.False(string.IsNullOrEmpty(line));
+        var path = line!["# manifest=".Length..].Trim();
+        Assert.True(File.Exists(path), $"Manifest missing: {path}");
+        return File.ReadAllText(path);
     }
 }

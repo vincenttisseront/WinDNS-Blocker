@@ -194,7 +194,7 @@ Set `DNSBLOCKER_USE_MOCK=1` to force the in-memory DNS provider (also automatic 
 ## Limits
 
 1. **No regex** — Steve Jenkins `regex.txt` cannot be imported into QRP.
-2. **Policy size** — domains are chunked (~1000 FQDN/policy by default). Very large lists may still hit DNS API limits; consider reducing sources or raising operational monitoring.
+2. **Policy size** — domains are packed under an ~8k-char FQDN criterion budget (~200/policy by default). Oversized criteria can Add successfully while leaving empty/inert FQDN criteria (**Succeeded ≠ block**). Sync verifies Enabled counts, optionally restarts the DNS Server service, and smoke-tests Resolve-DnsName. Prefer IGNORE (drop) over DENY (REFUSED / client failover).
 3. **Stats** — When collection is enabled, the hub turns on `Microsoft-Windows-DNSServer/Analytical` on each farm DNS target and polls QUERY_RECEIVED events into SQLite `query_events` (local ETW on the hub alone is not enough when DNS is on another host, e.g. windc05). Load explains why the window is empty (collector off, analytical not enabled, clients not using farm DNS / DoH). “Blocked” in tops means the query name matches the hub blocklist (including `*.apex` / apex expansion).
 4. **YouTube / CDN ads** — many mobile ad requests share the same hostnames as video delivery; pure DNS blocklists often cannot remove YouTube ads. Use **Status → Verify QRP policies** and **Stats** tops to confirm the hub is applying `DnsBlocker_*` policies and seeing queries — not to expect zero ads on phone YouTube.
 5. **Sync ≠ applied** — a successful push records chunk counts in SQLite; live presence/enabled state is verified separately via `Get-DnsServerQueryResolutionPolicy` (IPC `GetTargetPolicyStatus`).
