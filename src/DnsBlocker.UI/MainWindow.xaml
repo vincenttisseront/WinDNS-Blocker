@@ -35,8 +35,12 @@
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <ProgressBar x:Name="BusyBar" Width="120" Height="8" Margin="0,0,12,0"
                        IsIndeterminate="True" Visibility="Collapsed" VerticalAlignment="Center"/>
-          <TextBlock x:Name="BusyLabel" Text="" Margin="0,0,12,0" VerticalAlignment="Center"
+          <TextBlock x:Name="BusyLabel" Text="" Margin="0,0,8,0" VerticalAlignment="Center"
                      Foreground="{StaticResource MutedBrush}" Visibility="Collapsed"/>
+          <Button x:Name="SyncCancelButton" Content="{DynamicResource Btn.CancelSync}" Click="SyncCancel_Click"
+                  Margin="0,0,6,0" Visibility="Collapsed" Padding="8,4"/>
+          <Button x:Name="SyncBackgroundButton" Content="{DynamicResource Btn.SyncBackground}" Click="SyncBackground_Click"
+                  Margin="0,0,12,0" Visibility="Collapsed" Padding="8,4"/>
           <Button x:Name="WizardButton" Content="{DynamicResource Btn.Wizard}" Click="Wizard_Click" Margin="0,0,8,0"/>
           <Button x:Name="RefreshButton" Content="{DynamicResource Btn.Refresh}" Click="Refresh_Click"/>
           <Button x:Name="CheckUpdatesButton" Content="{DynamicResource Btn.CheckUpdates}" Click="CheckUpdates_Click"/>
@@ -229,7 +233,7 @@
         </ScrollViewer>
       </TabItem>
 
-      <TabItem Header="{DynamicResource Tab.Domains}">
+      <TabItem x:Name="DomainsTabItem" Header="{DynamicResource Tab.Domains}">
         <DockPanel Margin="0,12,0,0">
           <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
             <TextBlock x:Name="DomainHintLabel" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" TextWrapping="Wrap"/>

@@ -7,6 +7,7 @@ using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
 using DnsBlocker.Core.Setup;
+using DnsBlocker.Core.Ui;
 using DnsBlocker.Core.Updates;
 using DnsBlocker.UI.Localization;
 
@@ -21,9 +22,13 @@ public partial class MainWindow : Window
     private bool _serviceConnected;
     private bool _forceFirstRunWizard;
     private int _busyDepth;
+    private int _refreshGate;
     private IReadOnlyList<string> _lastServiceLogs = [];
     private string _machineDomain = "";
     private bool _languageBoxReady;
+    private CancellationTokenSource? _syncCts;
+    private bool _syncRunning;
+    private bool _syncDetached;
 
     public MainWindow()
     {
@@ -57,15 +62,16 @@ public partial class MainWindow : Window
     private void PrefillMachineDomain()
     {
         _machineDomain = MachineDomainDetector.GetDnsDomain();
+        // Hint only — do not put the machine domain in the search box.
+        // Auto-filling caused every Refresh to search « ar-systems.fr » (0 hits) and noisy logs.
+        DomainSearchBox.Text = "";
         if (!string.IsNullOrEmpty(_machineDomain))
         {
-            DomainSearchBox.Text = _machineDomain;
-            DomainHintLabel.Text = Loc.F("Main.DomainDetected", _machineDomain);
+            DomainHintLabel.Text = Loc.F("Main.DomainDetectedHint", _machineDomain);
             _journal.Write(Loc.F("Main.Journal.DomainDetected", _machineDomain));
         }
         else
         {
-            DomainSearchBox.Text = "";
             DomainHintLabel.Text = Loc.T("Main.DomainWorkgroup");
             _journal.Write(Loc.T("Main.Journal.DomainNone"));
         }
@@ -229,27 +235,16 @@ public partial class MainWindow : Window
         }
 
         _config = wizard.SavedConfig ?? _config;
+
+        // Refresh must finish and clear "Refreshing…" before ApplyNow starts.
+        // Previously ApplyNow ran inside the same RunBusyAsync(Refresh) → spinner stuck for hours on large lists.
         await RunBusyAsync(Loc.T("Main.Busy.Refresh"), async () =>
         {
             await RefreshAsync(checkUpdatesOnStartup: false).ConfigureAwait(true);
-            if (wizard.RequestedApplyNow && _serviceConnected)
-            {
-                _journal.Write(Loc.T("Main.Journal.WizardSync"));
-                try
-                {
-                    var result = await _client.ApplyNowAsync().ConfigureAwait(true);
-                    _journal.Write(result.Success
-                        ? Loc.F("Main.Journal.PostWizardSyncOk", result.DomainCount)
-                        : Loc.F("Main.Journal.PostWizardSyncFail", result.Error ?? Loc.T("Main.Journal.PostWizardPartial")));
-                    await RefreshAsync(checkUpdatesOnStartup: false).ConfigureAwait(true);
-                }
-                catch (Exception ex)
-                {
-                    _journal.Write(Loc.F("Main.Journal.PostWizardError", ex.Message));
-                    MessageBox.Show(ex.Message, "Sync", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
-            }
         }).ConfigureAwait(true);
+
+        if (wizard.RequestedApplyNow && _serviceConnected)
+            await StartSyncAsync(fromWizard: true).ConfigureAwait(true);
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e)
@@ -330,43 +325,246 @@ public partial class MainWindow : Window
     {
         try
         {
-            await RunBusyAsync(Loc.T("Main.Busy.Sync"), async () =>
-            {
-                _journal.Write(Loc.T("Main.Journal.ApplyNow"));
-                var result = await _client.ApplyNowAsync().ConfigureAwait(true);
-                var summary = result.Success
-                    ? Loc.F("Main.Sync.Ok", result.DomainCount, result.Targets.Count)
-                    : result.PartialSuccess
-                        ? Loc.F("Main.Sync.Partial",
-                            result.Targets.Count(t => t.Status == TargetSyncStatus.Succeeded),
-                            result.Targets.Count(t => t.Status == TargetSyncStatus.Failed))
-                        : Loc.F("Main.Sync.Fail", result.Error ?? Loc.T("Main.Sync.SeeDetails"));
-                _journal.Write(summary);
-                foreach (var t in result.Targets)
-                {
-                    _journal.Write(t.Status == TargetSyncStatus.Succeeded
-                        ? Loc.F("Main.Sync.TargetOk", t.Target, t.PolicyCount)
-                        : Loc.F("Main.Sync.TargetFail", t.Target, t.Error));
-                }
-
-                if (string.IsNullOrWhiteSpace(BlockTestDomainBox.Text))
-                    BlockTestDomainBox.Text = "beeg.com";
-
-                MessageBox.Show(summary, Loc.T("AppName"), MessageBoxButton.OK,
-                    result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
-                await RefreshAsync().ConfigureAwait(true);
-            }).ConfigureAwait(true);
+            await StartSyncAsync(fromWizard: false).ConfigureAwait(true);
         }
         catch (Exception ex)
         {
             _journal.Write(Loc.F("Main.Journal.SyncError", ex.Message));
             MessageBox.Show(ex.Message, Loc.T("Main.SyncErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
             ShowServiceDisconnected(ex.Message);
+            EndSyncSession();
+        }
+    }
+
+    private void SyncCancel_Click(object sender, RoutedEventArgs e)
+    {
+        _journal.Write(Loc.T("Main.Journal.SyncCancel"));
+        BusyLabel.Text = Loc.T("Main.Busy.Cancelling");
+        try { _syncCts?.Cancel(); }
+        catch { /* ignore */ }
+    }
+
+    private void SyncBackground_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_syncRunning)
+            return;
+
+        _syncDetached = true;
+        _journal.Write(Loc.T("Main.Journal.SyncBackground"));
+        SetSyncChromeVisible(false);
+        UpdateStatusLine.Text = Loc.T("Main.Sync.RunningBackground");
+        // Keep ApplyNow disabled while the IPC call is still in flight.
+        ApplyNowButton.IsEnabled = false;
+        RefreshLogsView();
+    }
+
+    /// <summary>
+    /// Runs ApplyNow with a dedicated sync chrome (not nested under Refreshing…).
+    /// Cancel aborts the IPC wait; Background clears the spinner and keeps the UI usable.
+    /// </summary>
+    private async Task StartSyncAsync(bool fromWizard)
+    {
+        if (_syncRunning)
+        {
+            MessageBox.Show(
+                Loc.T("Main.Sync.AlreadyRunning"),
+                Loc.T("AppName"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        _syncCts?.Dispose();
+        _syncCts = new CancellationTokenSource();
+        _syncRunning = true;
+        _syncDetached = false;
+        ApplyNowButton.IsEnabled = false;
+        SetSyncChromeVisible(true, Loc.T("Main.Busy.Sync"));
+
+        try
+        {
+            _journal.Write(fromWizard
+                ? Loc.T("Main.Journal.WizardSync")
+                : Loc.T("Main.Journal.ApplyNow"));
+            RefreshLogsView();
+
+            var applyTask = _client.ApplyNowAsync(_syncCts.Token);
+
+            while (!applyTask.IsCompleted)
+            {
+                if (_syncDetached)
+                {
+                    _ = CompleteDetachedSyncAsync(applyTask, fromWizard);
+                    return;
+                }
+
+                try
+                {
+                    await Task.Delay(1500, _syncCts.Token).ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                if (_syncDetached)
+                {
+                    _ = CompleteDetachedSyncAsync(applyTask, fromWizard);
+                    return;
+                }
+
+                await SoftPollSyncStatusAsync().ConfigureAwait(true);
+            }
+
+            SyncRunResult result;
+            try
+            {
+                result = await applyTask.ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                _journal.Write(Loc.T("Main.Journal.SyncCancelled"));
+                StatusSummary.Text = Loc.T("Main.Sync.Cancelled");
+                UpdateStatusLine.Text = Loc.T("Main.Sync.Cancelled");
+                return;
+            }
+
+            await PresentSyncResultAsync(result, fromWizard, showDialog: true).ConfigureAwait(true);
+            await RefreshAsync(checkUpdatesOnStartup: false).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            _journal.Write(Loc.T("Main.Journal.SyncCancelled"));
+            StatusSummary.Text = Loc.T("Main.Sync.Cancelled");
+            UpdateStatusLine.Text = Loc.T("Main.Sync.Cancelled");
+        }
+        catch (Exception ex)
+        {
+            _journal.Write(fromWizard
+                ? Loc.F("Main.Journal.PostWizardError", ex.Message)
+                : Loc.F("Main.Journal.SyncError", ex.Message));
+            MessageBox.Show(ex.Message, Loc.T("Main.SyncErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowServiceDisconnected(ex.Message);
         }
         finally
         {
-            RefreshLogsView();
+            if (!_syncDetached)
+                EndSyncSession();
         }
+    }
+
+    private async Task CompleteDetachedSyncAsync(Task<SyncRunResult> applyTask, bool fromWizard)
+    {
+        // Started from the UI thread; ConfigureAwait(true) keeps completions on the dispatcher.
+        try
+        {
+            SyncRunResult result;
+            try
+            {
+                result = await applyTask.ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                _journal.Write(Loc.T("Main.Journal.SyncCancelled"));
+                UpdateStatusLine.Text = Loc.T("Main.Sync.Cancelled");
+                return;
+            }
+
+            await PresentSyncResultAsync(result, fromWizard, showDialog: true).ConfigureAwait(true);
+            await RefreshAsync(checkUpdatesOnStartup: false).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _journal.Write(Loc.F("Main.Journal.SyncError", ex.Message));
+            UpdateStatusLine.Text = Loc.F("Main.Update.ErrorLine", ex.Message);
+        }
+        finally
+        {
+            EndSyncSession();
+        }
+    }
+
+    private async Task SoftPollSyncStatusAsync()
+    {
+        try
+        {
+            var status = await _client.GetStatusAsync().ConfigureAwait(true);
+            StatusSummary.Text = status.IsSyncing
+                ? Loc.T("Main.Status.Syncing")
+                : Loc.F("Main.Status.ActiveDomains", status.ActiveDomainCount);
+            if (!_syncDetached && _syncRunning)
+                BusyLabel.Text = Loc.T("Main.Busy.Sync");
+        }
+        catch
+        {
+            // Best-effort: ApplyNow may occupy a pipe; concurrent GetStatus usually works.
+        }
+    }
+
+    private async Task PresentSyncResultAsync(SyncRunResult result, bool fromWizard, bool showDialog)
+    {
+        var summary = result.Success
+            ? Loc.F("Main.Sync.Ok", result.DomainCount, result.Targets.Count)
+            : result.PartialSuccess
+                ? Loc.F("Main.Sync.Partial",
+                    result.Targets.Count(t => t.Status == TargetSyncStatus.Succeeded),
+                    result.Targets.Count(t => t.Status == TargetSyncStatus.Failed))
+                : Loc.F("Main.Sync.Fail", result.Error ?? Loc.T("Main.Sync.SeeDetails"));
+
+        if (fromWizard)
+        {
+            _journal.Write(result.Success
+                ? Loc.F("Main.Journal.PostWizardSyncOk", result.DomainCount)
+                : Loc.F("Main.Journal.PostWizardSyncFail", result.Error ?? Loc.T("Main.Journal.PostWizardPartial")));
+        }
+        else
+        {
+            _journal.Write(summary);
+        }
+
+        foreach (var t in result.Targets)
+        {
+            _journal.Write(t.Status == TargetSyncStatus.Succeeded
+                ? Loc.F("Main.Sync.TargetOk", t.Target, t.PolicyCount)
+                : Loc.F("Main.Sync.TargetFail", t.Target, t.Error));
+        }
+
+        if (string.IsNullOrWhiteSpace(BlockTestDomainBox.Text))
+            BlockTestDomainBox.Text = "beeg.com";
+
+        UpdateStatusLine.Text = summary;
+        RefreshLogsView();
+
+        if (showDialog)
+        {
+            MessageBox.Show(summary, Loc.T("AppName"), MessageBoxButton.OK,
+                result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+
+        await Task.CompletedTask.ConfigureAwait(true);
+    }
+
+    private void EndSyncSession()
+    {
+        _syncRunning = false;
+        _syncDetached = false;
+        SetSyncChromeVisible(false);
+        ApplyNowButton.IsEnabled = true;
+        if (UpdateStatusLine.Text == Loc.T("Main.Sync.RunningBackground"))
+            UpdateStatusLine.Text = "";
+        RefreshLogsView();
+    }
+
+    private void SetSyncChromeVisible(bool visible, string? label = null)
+    {
+        BusyBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        BusyLabel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        SyncCancelButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        SyncBackgroundButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (visible && !string.IsNullOrEmpty(label))
+            BusyLabel.Text = label!;
+        if (!visible)
+            BusyLabel.Text = "";
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
@@ -705,6 +903,13 @@ public partial class MainWindow : Window
 
     private async Task RefreshAsync(bool checkUpdatesOnStartup = false)
     {
+        if (Interlocked.CompareExchange(ref _refreshGate, 1, 0) != 0)
+        {
+            _journal.Write(Loc.T("Main.Journal.RefreshSkipped"));
+            RefreshLogsView();
+            return;
+        }
+
         StatusSummary.Text = Loc.T("Status.Connecting");
         ServiceHelpPanel.Visibility = Visibility.Collapsed;
 
@@ -758,11 +963,14 @@ public partial class MainWindow : Window
             BindPolicyProbe(status.LastPolicyProbe);
             _lastServiceLogs = status.RecentLogs;
 
+            var domainsTabSelected = ReferenceEquals(MainTabs.SelectedItem, DomainsTabItem);
             var query = DomainSearchBox.Text?.Trim() ?? "";
-            var domains = await _client.SearchDomainsAsync(query, 100).ConfigureAwait(true);
-            ApplyDomainResults(domains, query);
-            if (!string.IsNullOrEmpty(query))
+            if (UiRefreshPolicy.ShouldSearchDomainsOnRefresh(domainsTabSelected, query))
+            {
+                var domains = await _client.SearchDomainsAsync(query, 100).ConfigureAwait(true);
+                ApplyDomainResults(domains, query);
                 _journal.Write(Loc.F("Main.Journal.RefreshSearch", query, domains.Count));
+            }
 
             try
             {
@@ -781,7 +989,8 @@ public partial class MainWindow : Window
 
             _serviceConnected = true;
             ServiceHelpPanel.Visibility = Visibility.Collapsed;
-            UpdateStatusLine.Text = "";
+            if (!_syncRunning && !_syncDetached)
+                UpdateStatusLine.Text = "";
 
             _ = checkUpdatesOnStartup;
         }
@@ -802,6 +1011,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            Interlocked.Exchange(ref _refreshGate, 0);
             RefreshLogsView();
         }
     }
@@ -1023,9 +1233,14 @@ public partial class MainWindow : Window
     private async Task RunBusyAsync(string label, Func<Task> action)
     {
         _busyDepth++;
-        BusyBar.Visibility = Visibility.Visible;
-        BusyLabel.Visibility = Visibility.Visible;
-        BusyLabel.Text = label;
+        // Do not steal sync chrome while ApplyNow is in flight (including background mode).
+        if (!_syncRunning || _syncDetached)
+        {
+            BusyBar.Visibility = Visibility.Visible;
+            BusyLabel.Visibility = Visibility.Visible;
+            BusyLabel.Text = label;
+        }
+
         SetActionButtonsEnabled(false);
         try
         {
@@ -1036,10 +1251,23 @@ public partial class MainWindow : Window
             _busyDepth = Math.Max(0, _busyDepth - 1);
             if (_busyDepth == 0)
             {
-                BusyBar.Visibility = Visibility.Collapsed;
-                BusyLabel.Visibility = Visibility.Collapsed;
-                BusyLabel.Text = "";
-                SetActionButtonsEnabled(true);
+                if (_syncRunning && !_syncDetached)
+                {
+                    // Restore sync chrome after a nested refresh/busy action.
+                    SetSyncChromeVisible(true, Loc.T("Main.Busy.Sync"));
+                    ApplyNowButton.IsEnabled = false;
+                    SetActionButtonsEnabled(true);
+                    ApplyNowButton.IsEnabled = false;
+                }
+                else
+                {
+                    BusyBar.Visibility = Visibility.Collapsed;
+                    BusyLabel.Visibility = Visibility.Collapsed;
+                    BusyLabel.Text = "";
+                    SetActionButtonsEnabled(true);
+                    if (_syncRunning)
+                        ApplyNowButton.IsEnabled = false;
+                }
             }
 
             RefreshLogsView();
@@ -1051,7 +1279,8 @@ public partial class MainWindow : Window
         WizardButton.IsEnabled = enabled;
         RefreshButton.IsEnabled = enabled;
         CheckUpdatesButton.IsEnabled = enabled;
-        ApplyNowButton.IsEnabled = enabled;
+        // ApplyNow stays disabled while a sync session is active.
+        ApplyNowButton.IsEnabled = enabled && !_syncRunning;
         SearchDomainsButton.IsEnabled = enabled;
         if (VerifyPoliciesButton is not null)
             VerifyPoliciesButton.IsEnabled = enabled;
