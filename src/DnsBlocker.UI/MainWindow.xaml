@@ -24,14 +24,18 @@
           <TextBlock x:Name="UpdateStatusLine" Text="" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Content="Actualiser" Click="Refresh_Click"/>
-          <Button Content="Vérifier les mises à jour" Click="CheckUpdates_Click"/>
-          <Button Content="Mettre à jour maintenant" Click="ApplyNow_Click" FontWeight="SemiBold"/>
+          <ProgressBar x:Name="BusyBar" Width="120" Height="8" Margin="0,0,12,0"
+                       IsIndeterminate="True" Visibility="Collapsed" VerticalAlignment="Center"/>
+          <TextBlock x:Name="BusyLabel" Text="" Margin="0,0,12,0" VerticalAlignment="Center"
+                     Foreground="{StaticResource MutedBrush}" Visibility="Collapsed"/>
+          <Button x:Name="RefreshButton" Content="Actualiser" Click="Refresh_Click"/>
+          <Button x:Name="CheckUpdatesButton" Content="Vérifier les mises à jour" Click="CheckUpdates_Click"/>
+          <Button x:Name="ApplyNowButton" Content="Mettre à jour maintenant" Click="ApplyNow_Click" FontWeight="SemiBold"/>
         </StackPanel>
       </Grid>
     </Border>
 
-    <TabControl Background="Transparent" BorderThickness="0">
+    <TabControl x:Name="MainTabs" Background="Transparent" BorderThickness="0">
       <TabItem Header="Statut">
         <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
           <StackPanel>
@@ -142,18 +146,40 @@
 
       <TabItem Header="Domaines">
         <DockPanel Margin="0,12,0,0">
-          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBox x:Name="DomainSearchBox" Width="320" Margin="0,0,8,0"/>
-            <Button Content="Rechercher" Click="SearchDomains_Click"/>
+          <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock x:Name="DomainHintLabel" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal">
+              <Grid Width="360" Margin="0,0,8,0">
+                <TextBox x:Name="DomainSearchBox" Padding="8,6"/>
+                <TextBlock x:Name="DomainSearchPlaceholder"
+                           Text="Suffixe DNS machine (workgroup — saisissez un domaine)"
+                           Foreground="#9AA8B5" Margin="10,8,0,0" IsHitTestVisible="False"
+                           Visibility="Collapsed"/>
+              </Grid>
+              <Button x:Name="SearchDomainsButton" Content="Rechercher" Click="SearchDomains_Click"/>
+              <ProgressBar x:Name="DomainSearchBusy" Width="80" Height="8" Margin="12,0,0,0"
+                           IsIndeterminate="True" Visibility="Collapsed" VerticalAlignment="Center"/>
+            </StackPanel>
+            <TextBlock x:Name="DomainSearchStatus" Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}"/>
           </StackPanel>
-          <ListBox x:Name="DomainsList" BorderBrush="{StaticResource BorderBrushKey}"/>
+          <Grid>
+            <ListBox x:Name="DomainsList" BorderBrush="{StaticResource BorderBrushKey}"/>
+            <TextBlock x:Name="DomainsEmptyLabel"
+                       Text="Aucun domaine correspondant dans la blocklist active."
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{StaticResource MutedBrush}" Visibility="Collapsed"/>
+          </Grid>
         </DockPanel>
       </TabItem>
 
       <TabItem Header="Logs">
-        <TextBox x:Name="LogsBox" Margin="0,12,0,0" IsReadOnly="True" AcceptsReturn="True"
-                 VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
-                 FontFamily="Consolas" Background="{StaticResource PanelBrush}"/>
+        <DockPanel Margin="0,12,0,0">
+          <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" Foreground="{StaticResource MutedBrush}"
+                     Text="Journal des actions UI (et logs service). Fichier : %ProgramData%\DnsBlocker\logs\ui-actions.log"/>
+          <TextBox x:Name="LogsBox" IsReadOnly="True" AcceptsReturn="True"
+                   VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
+                   FontFamily="Consolas" Background="{StaticResource PanelBrush}"/>
+        </DockPanel>
       </TabItem>
 
       <TabItem Header="Stats">
