@@ -6,7 +6,7 @@ namespace DnsBlocker.UI;
 /// <summary>
 /// Records user-facing actions for the Logs tab and a durable ui-actions.log file.
 /// </summary>
-internal sealed class ActionJournal
+public sealed class ActionJournal
 {
     private readonly object _gate = new();
     private readonly List<string> _lines = [];

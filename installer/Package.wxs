@@ -125,6 +125,12 @@
       <Component Id="RepairScript" Guid="A9D2B6F7-8C0E-9F3A-4B5C-6D7E8F901234">
         <File Id="RepairPs1" Source="!(bindpath.ToolsDir)Repair-DnsBlocker.ps1" KeyPath="yes" />
       </Component>
+      <Component Id="RepairCmd" Guid="C1F4D8B9-0E2A-1B5C-6D7E-8F9012345678">
+        <File Id="RepairDnsBlockerCmd" Source="!(bindpath.ToolsDir)Repair-DnsBlocker.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="RepairAliasCmd" Guid="D2A5E9C0-1F3B-2C6D-7E8F-90123456789A">
+        <File Id="RepairCmdFile" Source="!(bindpath.ToolsDir)Repair.cmd" KeyPath="yes" />
+      </Component>
       <Component Id="InstallWrapper" Guid="B0E3C7A8-9D1F-0A4B-5C6D-7E8F90123456">
         <File Id="InstallWrapperPs1" Source="!(bindpath.ToolsDir)Install-DnsBlocker.ps1" KeyPath="yes" />
       </Component>

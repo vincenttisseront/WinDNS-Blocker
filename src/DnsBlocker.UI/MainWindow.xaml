@@ -9,19 +9,6 @@
         FontFamily="Segoe UI"
         FontSize="13">
   <DockPanel Margin="16">
-    <Border x:Name="FirstRunBanner" DockPanel.Dock="Top" Visibility="Collapsed"
-            Background="#E8F5F0" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
-            CornerRadius="6" Padding="14" Margin="0,0,0,12">
-      <DockPanel>
-        <Button DockPanel.Dock="Right" Content="J'ai compris" Click="FirstRunDismiss_Click"
-                Margin="12,0,0,0" VerticalAlignment="Center"/>
-        <StackPanel>
-          <TextBlock Text="Configuration initiale" FontWeight="SemiBold" Foreground="#0B6E4F"/>
-          <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#123"
-                     Text="1) Onglet Configuration — indiquez vos serveurs DNS (un FQDN par ligne).&#10;2) Enregistrez, puis « Mettre à jour maintenant » pour pousser les listes QRP.&#10;3) Onglet Domaines pour vérifier un domaine. L'assistant d'installation reste disponible dans le menu Démarrer."/>
-        </StackPanel>
-      </DockPanel>
-    </Border>
     <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
       <Grid>
         <Grid.ColumnDefinitions>
@@ -50,6 +37,7 @@
                        IsIndeterminate="True" Visibility="Collapsed" VerticalAlignment="Center"/>
           <TextBlock x:Name="BusyLabel" Text="" Margin="0,0,12,0" VerticalAlignment="Center"
                      Foreground="{StaticResource MutedBrush}" Visibility="Collapsed"/>
+          <Button x:Name="WizardButton" Content="Assistant…" Click="Wizard_Click" Margin="0,0,8,0"/>
           <Button x:Name="RefreshButton" Content="Actualiser" Click="Refresh_Click"/>
           <Button x:Name="CheckUpdatesButton" Content="Vérifier les mises à jour" Click="CheckUpdates_Click"/>
           <Button x:Name="ApplyNowButton" Content="Mettre à jour maintenant" Click="ApplyNow_Click" FontWeight="SemiBold"/>

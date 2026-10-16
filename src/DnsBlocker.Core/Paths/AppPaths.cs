@@ -23,15 +23,43 @@ public static class AppPaths
     public static string StateDbPath => Path.Combine(DataDirectory, "state.db");
     public static string LogDirectory => Path.Combine(DataDirectory, "logs");
 
+    /// <summary>
+    /// Written when the first-run wizard finishes. Shared contract with install/repair tooling.
+    /// </summary>
+    public static string SetupCompleteFlagPath => Path.Combine(DataDirectory, "setup-complete.flag");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(DataDirectory);
         Directory.CreateDirectory(LogDirectory);
     }
 
+    public static void MarkSetupComplete()
+    {
+        EnsureDirectories();
+        File.WriteAllText(SetupCompleteFlagPath,
+            $"completedUtc={DateTimeOffset.UtcNow:O}{Environment.NewLine}");
+    }
+
+    public static void ClearSetupComplete()
+    {
+        try
+        {
+            if (File.Exists(SetupCompleteFlagPath))
+                File.Delete(SetupCompleteFlagPath);
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    public static bool SetupCompleteFlagExists() => File.Exists(SetupCompleteFlagPath);
+
     /// <summary>
     /// Best-effort ACL so interactive users can read logs while SYSTEM retains full control.
     /// Safe to call repeatedly; no-ops on non-Windows or if icacls is unavailable.
+    /// Uses SIDs for French/localized Windows Server.
     /// </summary>
     public static void TryHardenDataDirectoryAcl()
     {
@@ -41,7 +69,6 @@ public static class AppPaths
         try
         {
             EnsureDirectories();
-            // SIDs work on FR/EN Server (BUILTIN\Administrators often fails as Administrateurs).
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "icacls.exe",
@@ -56,7 +83,7 @@ public static class AppPaths
         }
         catch
         {
-            // ignore — doctor.ps1 can fix ACLs later
+            // ignore — doctor / Setup assistant can fix ACLs later
         }
     }
 }

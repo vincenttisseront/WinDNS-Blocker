@@ -3,7 +3,7 @@ using System.Windows.Controls;
 using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
-using DnsBlocker.Core.Paths;
+using DnsBlocker.Core.Setup;
 using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.UI;
@@ -15,7 +15,7 @@ public partial class MainWindow : Window
     private AppConfig? _config;
     private bool _startupUpdateCheckDone;
     private bool _serviceConnected;
-    private bool _firstRunMode;
+    private bool _forceFirstRunWizard;
     private int _busyDepth;
     private IReadOnlyList<string> _lastServiceLogs = [];
     private string _machineDomain = "";
@@ -31,26 +31,13 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Called by App when /firstrun is passed or ProgramData\DnsBlocker\firstrun.pending exists.
-    /// Coordinates with any parallel first-run wizard via that flag file.
+    /// Called when install Setup assistant hands off with /firstrun.
+    /// Forces the PR #6 SetupWizardWindow even if a stale setup-complete.flag exists.
     /// </summary>
     public void EnableFirstRunMode()
     {
-        _firstRunMode = true;
-        FirstRunBanner.Visibility = Visibility.Visible;
-        // Configuration tab is typically index 1 (Statut=0, Configuration=1)
-        if (MainTabs.Items.Count > 1)
-            MainTabs.SelectedIndex = 1;
-        _journal.Write("Mode configuration initiale (/firstrun ou firstrun.pending)");
-        RefreshLogsView();
-    }
-
-    private void FirstRunDismiss_Click(object sender, RoutedEventArgs e)
-    {
-        FirstRunBanner.Visibility = Visibility.Collapsed;
-        FirstRunHandoff.ClearPending();
-        _firstRunMode = false;
-        _journal.Write("Bannière configuration initiale fermée");
+        _forceFirstRunWizard = true;
+        _journal.Write("Handoff install → configuration initiale (/firstrun)");
         RefreshLogsView();
     }
 
@@ -88,11 +75,25 @@ public partial class MainWindow : Window
             await RunBusyAsync("Connexion…", async () =>
             {
                 _journal.Write("Démarrage UI — actualisation initiale");
-                await RefreshAsync(checkUpdatesOnStartup: true).ConfigureAwait(true);
+                await RefreshAsync(checkUpdatesOnStartup: false).ConfigureAwait(true);
                 _journal.Write(_serviceConnected
                     ? "Démarrage UI — service joignable"
                     : "Démarrage UI — service injoignable");
             }).ConfigureAwait(true);
+
+            await MaybeShowSetupWizardAsync(force: _forceFirstRunWizard).ConfigureAwait(true);
+            _forceFirstRunWizard = false;
+
+            // Update check after wizard so first-run is not interrupted.
+            if (_serviceConnected && _config is not null && _config.CheckUpdatesOnStartup
+                && !string.IsNullOrWhiteSpace(_config.UpdateFeedUrl) && !_startupUpdateCheckDone)
+            {
+                _startupUpdateCheckDone = true;
+                await RunBusyAsync("Vérif. mises à jour…", async () =>
+                {
+                    await CheckUpdatesAsync(promptIfAvailable: true, quietIfCurrent: true).ConfigureAwait(true);
+                }).ConfigureAwait(true);
+            }
         }
         catch (Exception ex)
         {
@@ -105,6 +106,68 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
+    }
+
+    private async void Wizard_Click(object sender, RoutedEventArgs e)
+    {
+        _journal.Write("Action : Relancer l'assistant");
+        await MaybeShowSetupWizardAsync(force: true).ConfigureAwait(true);
+    }
+
+    private async Task MaybeShowSetupWizardAsync(bool force)
+    {
+        AppConfig? cfg = _config;
+        if (cfg is null && _serviceConnected)
+        {
+            try { cfg = await _client.GetConfigAsync().ConfigureAwait(true); }
+            catch { /* ignore */ }
+        }
+
+        cfg ??= new AppConfig();
+
+        if (!force && !SetupWizardGate.ShouldShowWizard(cfg))
+            return;
+
+        if (force)
+            SetupWizardGate.ResetForRerun(cfg);
+
+        _journal.Write(force
+            ? "Ouverture assistant (relance manuelle)"
+            : "Ouverture assistant (premier lancement / config incomplète)");
+
+        var wizard = new SetupWizardWindow(_client, _journal, cfg) { Owner = this };
+        var ok = wizard.ShowDialog() == true && wizard.Completed;
+        RefreshLogsView();
+
+        if (!ok)
+        {
+            _journal.Write("Assistant fermé sans enregistrement");
+            RefreshLogsView();
+            return;
+        }
+
+        _config = wizard.SavedConfig ?? _config;
+        await RunBusyAsync("Actualisation…", async () =>
+        {
+            await RefreshAsync(checkUpdatesOnStartup: false).ConfigureAwait(true);
+            if (wizard.RequestedApplyNow && _serviceConnected)
+            {
+                _journal.Write("Assistant — sync demandée après enregistrement");
+                try
+                {
+                    var result = await _client.ApplyNowAsync().ConfigureAwait(true);
+                    _journal.Write(result.Success
+                        ? $"Sync post-assistant OK — {result.DomainCount} domaines"
+                        : $"Sync post-assistant — {result.Error ?? "partielle/échec"}");
+                    await RefreshAsync(checkUpdatesOnStartup: false).ConfigureAwait(true);
+                }
+                catch (Exception ex)
+                {
+                    _journal.Write("Sync post-assistant — erreur : " + ex.Message);
+                    MessageBox.Show(ex.Message, "Sync", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+        }).ConfigureAwait(true);
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e)
@@ -375,12 +438,8 @@ public partial class MainWindow : Window
             ServiceHelpPanel.Visibility = Visibility.Collapsed;
             UpdateStatusLine.Text = "";
 
-            if (checkUpdatesOnStartup && !_startupUpdateCheckDone && _config.CheckUpdatesOnStartup
-                && !string.IsNullOrWhiteSpace(_config.UpdateFeedUrl))
-            {
-                _startupUpdateCheckDone = true;
-                await CheckUpdatesAsync(promptIfAvailable: true, quietIfCurrent: true).ConfigureAwait(true);
-            }
+            // Startup update check is handled by OnLoaded after the setup wizard.
+            _ = checkUpdatesOnStartup;
         }
         catch (Exception ex)
         {
@@ -558,6 +617,7 @@ public partial class MainWindow : Window
 
     private void SetActionButtonsEnabled(bool enabled)
     {
+        WizardButton.IsEnabled = enabled;
         RefreshButton.IsEnabled = enabled;
         CheckUpdatesButton.IsEnabled = enabled;
         ApplyNowButton.IsEnabled = enabled;

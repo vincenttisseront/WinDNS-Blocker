@@ -56,18 +56,20 @@ find "$UI_OUT" -maxdepth 1 -type f ! -name '*.pdb' -exec cp -a {} "$STAGE/DnsBlo
 find "$UI_OUT" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
 find "$STAGE/DnsBlocker/UI" -name '*.pdb' -delete
 # Post-install tools (REQUIRED — v1.0.3 logo MSI omitted these; never skip)
-for tool in doctor.ps1 Verify-Install.cmd Repair-DnsBlocker.ps1 Install-DnsBlocker.ps1; do
+# Repair*.cmd launch UI /setup (GUI) — contract with InstallRepairLauncher / PR #6
+for tool in doctor.ps1 Verify-Install.cmd Repair-DnsBlocker.ps1 Repair-DnsBlocker.cmd Repair.cmd Install-DnsBlocker.ps1; do
   if [[ ! -f "$ROOT/scripts/$tool" ]]; then
     echo "FAIL: missing required tool scripts/$tool" >&2
     exit 1
   fi
   cp -a "$ROOT/scripts/$tool" "$STAGE/DnsBlocker/$tool"
 done
-if [[ ! -f "$STAGE/DnsBlocker/doctor.ps1" ]] || [[ ! -f "$STAGE/DnsBlocker/Verify-Install.cmd" ]]; then
+if [[ ! -f "$STAGE/DnsBlocker/doctor.ps1" ]] || [[ ! -f "$STAGE/DnsBlocker/Verify-Install.cmd" ]] \
+   || [[ ! -f "$STAGE/DnsBlocker/Repair-DnsBlocker.cmd" ]] || [[ ! -f "$STAGE/DnsBlocker/Repair.cmd" ]]; then
   echo "FAIL: tools not staged under $STAGE/DnsBlocker" >&2
   exit 1
 fi
-echo "Staged tools: doctor.ps1 + Verify-Install.cmd + Repair-DnsBlocker.ps1 + Install-DnsBlocker.ps1"
+echo "Staged tools: doctor + Verify-Install + Repair*.cmd/.ps1 + Install-DnsBlocker.ps1"
 # ensure logs placeholder
 : > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
 

@@ -1,53 +1,38 @@
 namespace DnsBlocker.Core.Paths;
 
 /// <summary>
-/// Shared handoff between the post-install Setup assistant and the main UI
-/// (and any parallel first-run wizard worker).
+/// Install Setup assistant ↔ UI first-run wizard handoff.
+/// Uses the PR #6 contract: <c>setup-complete.flag</c> + config <c>setupWizardCompleted</c>.
+/// CLI args <c>/setup</c> (install health UI) and <c>/firstrun</c> (force config wizard).
 /// </summary>
 public static class FirstRunHandoff
 {
     public const string ArgSetup = "/setup";
     public const string ArgFirstRun = "/firstrun";
 
-    /// <summary>Presence of this file means the UI should open the guided initial configuration.</summary>
-    public static string PendingFlagPath => Path.Combine(AppPaths.DataDirectory, "firstrun.pending");
+    /// <summary>Legacy alias — prefer <see cref="AppPaths.SetupCompleteFlagPath"/>.</summary>
+    public static string PendingFlagPath => AppPaths.SetupCompleteFlagPath;
 
-    public static bool IsPending()
-    {
-        try
-        {
-            return File.Exists(PendingFlagPath);
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static bool IsPending() => !AppPaths.SetupCompleteFlagExists();
 
+    /// <summary>
+    /// Ensure wizard will show: clear completion flag so SetupWizardGate opens.
+    /// </summary>
     public static void MarkPending(string source)
     {
         AppPaths.EnsureDirectories();
-        var payload =
-            "{\n" +
-            "  \"source\": \"" + Escape(source) + "\",\n" +
-            "  \"createdAt\": \"" + DateTimeOffset.UtcNow.ToString("o") + "\"\n" +
-            "}\n";
-        File.WriteAllText(PendingFlagPath, payload);
-    }
-
-    public static void ClearPending()
-    {
+        AppPaths.ClearSetupComplete();
+        var note = Path.Combine(AppPaths.DataDirectory, "firstrun-handoff.log");
         try
         {
-            if (File.Exists(PendingFlagPath))
-                File.Delete(PendingFlagPath);
+            File.AppendAllText(note,
+                $"{DateTimeOffset.UtcNow:o} handoff source={source}{Environment.NewLine}");
         }
         catch
         {
-            // ignore — UI can still proceed
+            // ignore
         }
     }
 
-    private static string Escape(string value) =>
-        value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+    public static void ClearPending() => AppPaths.MarkSetupComplete();
 }

@@ -28,7 +28,8 @@ public partial class App : Application
         }
 
         var main = new MainWindow();
-        if (firstRunArg || FirstRunHandoff.IsPending())
+        // /firstrun from Setup assistant forces the config wizard; otherwise SetupWizardGate decides.
+        if (firstRunArg)
             main.EnableFirstRunMode();
         MainWindow = main;
         MainWindow.Show();

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using DnsBlocker.Core.Paths;
@@ -153,6 +154,7 @@ public partial class SetupWindow : Window
     {
         try
         {
+            // Clear setup-complete.flag so PR #6 SetupWizardGate / /firstrun opens the wizard.
             FirstRunHandoff.MarkPending("setup-assistant");
             var ui = Path.Combine(
                 _last?.InstallRoot ?? InstallHealth.ResolveInstallRoot(),

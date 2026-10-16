@@ -254,6 +254,7 @@ public sealed class HubRuntime
         PolicyNamePrefix = c.PolicyNamePrefix,
         UpdateFeedUrl = c.UpdateFeedUrl,
         CheckUpdatesOnStartup = c.CheckUpdatesOnStartup,
-        AutoInstallUpdates = c.AutoInstallUpdates
+        AutoInstallUpdates = c.AutoInstallUpdates,
+        SetupWizardCompleted = c.SetupWizardCompleted
     };
 }
