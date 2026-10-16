@@ -346,7 +346,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Default local DNS target without WinRM (PR #17). Property CA Setup launch retained (type 242).",
+  "releaseNotes": "Fix blank Unexpected error dialog + richer ui-crash.log (PR #18). Property CA Setup launch retained (type 242).",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
