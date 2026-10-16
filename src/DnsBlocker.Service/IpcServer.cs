@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using DnsBlocker.Core.Ipc;
+using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Paths;
 using Microsoft.Extensions.Logging;
 
@@ -139,6 +140,34 @@ public sealed class IpcServer
                     var result = await _runtime.InstallUpdateAsync(p.Manifest, p.Silent, cancellationToken)
                         .ConfigureAwait(false);
                     return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodTestTargetWinRm:
+                {
+                    var p = request.Params?.Deserialize<TargetWinRmTestRequest>(IpcProtocol.JsonOptions)
+                            ?? throw new InvalidOperationException("Missing WinRM test params");
+                    var result = await _runtime.TestTargetWinRmAsync(p, cancellationToken).ConfigureAwait(false);
+                    p.Password = "";
+                    return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodPrepareDnsTarget:
+                {
+                    var p = request.Params?.Deserialize<PrepareDnsTargetRequest>(IpcProtocol.JsonOptions)
+                            ?? throw new InvalidOperationException("Missing prepare params");
+                    var result = await _runtime.PrepareDnsTargetAsync(p, cancellationToken).ConfigureAwait(false);
+                    p.Password = "";
+                    return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodGetPreparedTargets:
+                    return IpcResponse.Success(request.Id, _runtime.GetPreparedTargets());
+
+                case IpcProtocol.MethodClearTargetCredentials:
+                {
+                    var p = request.Params?.Deserialize<ClearTargetCredentialsParams>(IpcProtocol.JsonOptions)
+                            ?? throw new InvalidOperationException("Missing hostname");
+                    return IpcResponse.Success(request.Id, _runtime.ClearTargetCredentials(p.Hostname));
                 }
 
                 default:

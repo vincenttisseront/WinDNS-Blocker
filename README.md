@@ -22,6 +22,18 @@ Hub (service + UI)
 - WinRM reachability + DNS admin rights on each target
 - If DNS policies already replicate via AD, you may list a single target; otherwise list every DNS you want updated
 
+### Préparer une cible DNS (WIN32 1011)
+
+QRP policies need **Full Control** on `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server` on the target. DnsAdmins alone often yields **WIN32 1011**.
+
+**From the app:** Configuration → **Préparer une cible (WinRM)…**
+
+1. Hostname (prefill from farm / machine domain)
+2. Admin `DOMAINE\user` + password (DPAPI LocalMachine in `ProgramData\DnsBlocker\secrets` if saved — never logged)
+3. Test WinRM / CIM
+4. Remote prep: registry ACL for hub service account (or DnsAdmins), optional DnsAdmins membership, probe Add/Remove QRP
+5. Target marked prepared; normal sync uses the hub service identity afterward
+
 ## Build
 
 ```powershell

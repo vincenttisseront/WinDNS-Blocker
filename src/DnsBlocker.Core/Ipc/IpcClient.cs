@@ -49,6 +49,25 @@ public sealed class IpcClient : IAsyncDisposable
             new InstallUpdateParams { Manifest = manifest, Silent = silent },
             cancellationToken);
 
+    public Task<TargetWinRmTestResult> TestTargetWinRmAsync(
+        TargetWinRmTestRequest request,
+        CancellationToken cancellationToken = default) =>
+        InvokeAsync<TargetWinRmTestResult>(IpcProtocol.MethodTestTargetWinRm, request, cancellationToken);
+
+    public Task<PrepareDnsTargetResult> PrepareDnsTargetAsync(
+        PrepareDnsTargetRequest request,
+        CancellationToken cancellationToken = default) =>
+        InvokeAsync<PrepareDnsTargetResult>(IpcProtocol.MethodPrepareDnsTarget, request, cancellationToken);
+
+    public Task<List<PreparedTargetInfo>> GetPreparedTargetsAsync(CancellationToken cancellationToken = default) =>
+        InvokeAsync<List<PreparedTargetInfo>>(IpcProtocol.MethodGetPreparedTargets, null, cancellationToken);
+
+    public Task<bool> ClearTargetCredentialsAsync(string hostname, CancellationToken cancellationToken = default) =>
+        InvokeAsync<bool>(
+            IpcProtocol.MethodClearTargetCredentials,
+            new ClearTargetCredentialsParams { Hostname = hostname },
+            cancellationToken);
+
     private async Task<T> InvokeAsync<T>(string method, object? parameters, CancellationToken cancellationToken)
     {
         await using var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
