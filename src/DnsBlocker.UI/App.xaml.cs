@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using DnsBlocker.Core.Paths;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -9,6 +10,9 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Culture + string dictionaries before any Window InitializeComponent.
+        UiCulture.ApplyFromConfig();
+
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
@@ -39,7 +43,7 @@ public partial class App : Application
     {
         LogCrash("DispatcherUnhandledException", e.Exception);
         e.Handled = true;
-        ShowFatal("Erreur inattendue", e.Exception);
+        ShowFatal(Loc.T("Err.Unexpected"), e.Exception);
     }
 
     private static void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
@@ -47,7 +51,7 @@ public partial class App : Application
         if (e.ExceptionObject is Exception ex)
         {
             LogCrash("UnhandledException", ex);
-            ShowFatal("Erreur fatale", ex);
+            ShowFatal(Loc.T("Err.Fatal"), ex);
         }
     }
 
@@ -55,7 +59,7 @@ public partial class App : Application
     {
         LogCrash("UnobservedTaskException", e.Exception);
         e.SetObserved();
-        ShowFatal("Erreur asynchrone", e.Exception);
+        ShowFatal(Loc.T("Err.Async"), e.Exception);
     }
 
     private static void ShowFatal(string title, Exception ex)
@@ -63,12 +67,8 @@ public partial class App : Application
         try
         {
             MessageBox.Show(
-                "WinDNS Blocker a rencontré une erreur mais reste ouvert.\n\n" +
-                title + ":\n" + ex.Message +
-                "\n\nSi le service DnsBlocker n'est pas démarré, utilisez le bouton « Démarrer le service ».\n" +
-                "Diagnostic : menu Démarrer → « Assistant d'installation WinDNS Blocker »\n" +
-                "Journal : " + Path.Combine(AppPaths.LogDirectory, "ui-crash.log"),
-                "WinDNS Blocker",
+                Loc.F("Err.CrashBody", title, ex.Message, Path.Combine(AppPaths.LogDirectory, "ui-crash.log")),
+                Loc.T("AppName"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }

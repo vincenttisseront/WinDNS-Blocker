@@ -68,4 +68,11 @@ public sealed class AppConfig
     /// Mirrored by ProgramData setup-complete.flag for install-worker coordination.
     /// </summary>
     public bool SetupWizardCompleted { get; set; } = false;
+
+    /// <summary>
+    /// UI language override stored in ProgramData config.json.
+    /// Empty / "auto" = follow OS UI culture (fr* → French, otherwise English).
+    /// Explicit: "en" or "fr".
+    /// </summary>
+    public string UiLanguage { get; set; } = "auto";
 }

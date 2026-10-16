@@ -5,6 +5,7 @@ using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
 using DnsBlocker.Core.Setup;
 using DnsBlocker.Core.Updates;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -36,7 +37,7 @@ public partial class SetupWizardWindow : Window
 
     private async Task RefreshWelcomeAsync()
     {
-        SetBusy(true, "Vérification du service…");
+        SetBusy(true, Loc.T("Wizard.Busy.Service"));
         try
         {
             var probe = ServiceProcessHelper.Probe();
@@ -52,14 +53,14 @@ public partial class SetupWizardWindow : Window
             }
 
             WelcomeServiceStatus.Text = connected
-                ? "Service DnsBlocker : connecté"
+                ? Loc.T("Wizard.Service.Connected")
                 : probe.Exists
-                    ? $"Service DnsBlocker : {probe.Detail} (IPC injoignable)"
-                    : "Service DnsBlocker : non installé / introuvable";
+                    ? Loc.F("Wizard.Service.Detail", probe.Detail)
+                    : Loc.T("Wizard.Service.Missing");
 
             WelcomeDomainStatus.Text = string.IsNullOrEmpty(_machineDomain)
-                ? "Domaine machine : (workgroup — aucun suffixe DNS détecté)"
-                : $"Domaine machine : {_machineDomain}";
+                ? Loc.T("Wizard.Domain.Workgroup")
+                : Loc.F("Wizard.Domain.Detected", _machineDomain);
 
             var helper = InstallRepairLauncher.FindHelper();
             var needsRepair = !connected || !probe.Exists || !probe.Running;
@@ -67,19 +68,17 @@ public partial class SetupWizardWindow : Window
             if (helper is null)
             {
                 RepairButton.IsEnabled = false;
-                RepairHint.Text =
-                    "Aucun assistant de réparation trouvé sous « " + (InstallRepairLauncher.InstallRoot ?? "?") +
-                    " » (attendu : Repair-DnsBlocker.exe / .cmd / .ps1 ou Verify-Install.cmd). " +
-                    "Réinstallez le MSI v1.0.6+ ou placez Repair-DnsBlocker.ps1 dans le dossier d'installation.";
+                RepairHint.Text = Loc.F("Wizard.Repair.NoHelper", InstallRepairLauncher.InstallRoot ?? "?");
             }
             else
             {
                 RepairButton.IsEnabled = true;
-                RepairHint.Text = "Helper détecté : " + helper.Value.FileName;
+                RepairHint.Text = Loc.F("Wizard.Repair.Helper", helper.Value.FileName);
             }
 
-            _journal.Write(
-                $"Assistant — bienvenue (service {(connected ? "OK" : "KO")}, domaine={(_machineDomain.Length == 0 ? "workgroup" : _machineDomain)})");
+            _journal.Write(Loc.F("Wizard.Journal.Welcome",
+                connected ? "OK" : "KO",
+                _machineDomain.Length == 0 ? "workgroup" : _machineDomain));
         }
         finally
         {
@@ -95,15 +94,15 @@ public partial class SetupWizardWindow : Window
                 ? "dns1.example.local"
                 : $"dns1.{_machineDomain}\ndns2.{_machineDomain}";
             TargetsDomainHint.Text = string.IsNullOrEmpty(_machineDomain)
-                ? "Suggestion : remplacez example.local par vos FQDN DNS."
-                : $"Suggestion basée sur le domaine détecté « {_machineDomain} » — adaptez les hostnames.";
+                ? Loc.T("Wizard.Targets.SuggestGeneric")
+                : Loc.F("Wizard.Targets.SuggestDomain", _machineDomain);
         }
         else
         {
             TargetsBox.Text = string.Join(Environment.NewLine, _draft.DnsTargets);
             TargetsDomainHint.Text = string.IsNullOrEmpty(_machineDomain)
                 ? ""
-                : $"Domaine machine détecté : {_machineDomain}";
+                : Loc.F("Wizard.Targets.DomainDetected", _machineDomain);
         }
 
         BlocklistsUrlBox.Text = string.IsNullOrWhiteSpace(_draft.BlocklistsUrl)
@@ -130,41 +129,41 @@ public partial class SetupWizardWindow : Window
 
         BackButton.IsEnabled = _step > 0 && !_busy;
         SkipButton.Visibility = _step < StepCount - 1 ? Visibility.Visible : Visibility.Collapsed;
-        NextButton.Content = _step == StepCount - 1 ? "Enregistrer" : "Suivant";
+        NextButton.Content = _step == StepCount - 1 ? Loc.T("Btn.Save") : Loc.T("Btn.Next");
 
         StepTitle.Text = _step switch
         {
-            0 => "Étape 1 / 5 — Bienvenue",
-            1 => "Étape 2 / 5 — Serveurs DNS",
-            2 => "Étape 3 / 5 — Listes de blocage",
-            3 => "Étape 4 / 5 — Mises à jour (optionnel)",
-            _ => "Étape 5 / 5 — Confirmation"
+            0 => Loc.T("Wizard.Step.1"),
+            1 => Loc.T("Wizard.Step.2"),
+            2 => Loc.T("Wizard.Step.3"),
+            3 => Loc.T("Wizard.Step.4"),
+            _ => Loc.T("Wizard.Step.5")
         };
         StepSubtitle.Text = _step switch
         {
-            0 => "État du service et de l'installation.",
-            1 => "Farm DNS (hub → N serveurs).",
-            2 => "Sources LoL Steve Jenkins + action QRP.",
-            3 => "Flux version.json pour les mises à jour de l'app.",
-            _ => "Enregistrement dans ProgramData via le service."
+            0 => Loc.T("Wizard.Sub.1"),
+            1 => Loc.T("Wizard.Sub.2"),
+            2 => Loc.T("Wizard.Sub.3"),
+            3 => Loc.T("Wizard.Sub.4"),
+            _ => Loc.T("Wizard.Sub.5")
         };
 
         if (_step == 4)
             ConfirmSummary.Text = BuildSummary();
 
-        _journal.Write($"Assistant — affichage étape {_step + 1}/{StepCount}");
+        _journal.Write(Loc.F("Wizard.Journal.Step", _step + 1, StepCount));
     }
 
     private string BuildSummary()
     {
         CollectFromUi();
-        return
-            $"Cibles DNS:\n  {string.Join("\n  ", _draft.DnsTargets)}\n\n" +
-            $"Blocklists: {_draft.BlocklistsUrl}\n" +
-            $"Whitelists: {_draft.WhitelistsUrl}\n" +
-            $"Action QRP: {_draft.PolicyAction}\n" +
-            $"Update feed: {(string.IsNullOrWhiteSpace(_draft.UpdateFeedUrl) ? "(désactivé)" : _draft.UpdateFeedUrl)}\n" +
-            $"Check updates on startup: {_draft.CheckUpdatesOnStartup}";
+        return Loc.F("Wizard.Summary",
+            string.Join("\n  ", _draft.DnsTargets),
+            _draft.BlocklistsUrl,
+            _draft.WhitelistsUrl,
+            _draft.PolicyAction,
+            string.IsNullOrWhiteSpace(_draft.UpdateFeedUrl) ? Loc.T("Wizard.Summary.Disabled") : _draft.UpdateFeedUrl,
+            _draft.CheckUpdatesOnStartup);
     }
 
     private void CollectFromUi()
@@ -189,7 +188,7 @@ public partial class SetupWizardWindow : Window
 
     private void Skip_Click(object sender, RoutedEventArgs e)
     {
-        _journal.Write($"Assistant — passer étape {_step + 1}");
+        _journal.Write(Loc.F("Wizard.Journal.Skip", _step + 1));
         if (_step < StepCount - 1)
             ShowStep(_step + 1);
     }
@@ -206,7 +205,7 @@ public partial class SetupWizardWindow : Window
                 CollectFromUi();
                 if (_draft.DnsTargets.Count == 0)
                 {
-                    MessageBox.Show("Ajoutez au moins une cible DNS.", "Assistant", MessageBoxButton.OK,
+                    MessageBox.Show(Loc.T("Wizard.NeedTarget"), Loc.T("Wizard.TitleShort"), MessageBoxButton.OK,
                         MessageBoxImage.Warning);
                     return;
                 }
@@ -225,34 +224,32 @@ public partial class SetupWizardWindow : Window
         if (_draft.DnsTargets.Count == 0 || _draft.DnsTargets.All(SetupWizardGate.IsLocalOnlyTarget))
         {
             MessageBox.Show(
-                "Indiquez au moins un serveur DNS réel (pas seulement localhost).",
-                "Assistant",
+                Loc.T("Wizard.NeedRealDns"),
+                Loc.T("Wizard.TitleShort"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             ShowStep(1);
             return;
         }
 
-        SetBusy(true, "Enregistrement…");
+        SetBusy(true, Loc.T("Wizard.Busy.Saving"));
         try
         {
-            _journal.Write("Assistant — enregistrement configuration");
+            _journal.Write(Loc.T("Wizard.Journal.Saving"));
             SetupWizardGate.MarkCompleted(_draft);
             SavedConfig = await _client.SetConfigAsync(_draft).ConfigureAwait(true);
             RequestedApplyNow = ApplyNowBox.IsChecked == true;
             Completed = true;
-            _journal.Write(
-                $"Assistant — terminé ({SavedConfig.DnsTargets.Count} cible(s), applyNow={RequestedApplyNow})");
+            _journal.Write(Loc.F("Wizard.Journal.Done", SavedConfig.DnsTargets.Count, RequestedApplyNow));
             DialogResult = true;
             Close();
         }
         catch (Exception ex)
         {
-            _journal.Write("Assistant — erreur enregistrement : " + ex.Message);
+            _journal.Write(Loc.F("Wizard.Journal.SaveError", ex.Message));
             MessageBox.Show(
-                "Impossible d'enregistrer via le service.\n\n" + ex.Message +
-                "\n\nDémarrez ou réparez le service, puis réessayez.",
-                "Assistant",
+                Loc.F("Wizard.SaveFail", ex.Message),
+                Loc.T("Wizard.TitleShort"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
@@ -268,27 +265,26 @@ public partial class SetupWizardWindow : Window
         if (helper is null)
         {
             MessageBox.Show(
-                "Aucun helper de réparation n'est présent dans le dossier d'installation.\n" +
-                "Installez le MSI WinDNS Blocker récent (v1.0.6+) qui embarque Repair-DnsBlocker.",
-                "Réparation",
+                Loc.T("Wizard.Repair.NoHelperBox"),
+                Loc.T("Setup.RepairTitle"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
-            _journal.Write("Assistant — réparation : helper introuvable");
+            _journal.Write(Loc.T("Wizard.Journal.RepairMissing"));
             return;
         }
 
-        _journal.Write("Assistant — lancement réparation : " + helper.Value.FileName);
+        _journal.Write(Loc.F("Wizard.Journal.RepairLaunch", helper.Value.FileName));
         var err = InstallRepairLauncher.Launch(helper.Value);
         if (err is not null)
         {
-            _journal.Write("Assistant — réparation échec : " + err);
-            MessageBox.Show(err, "Réparation", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _journal.Write(Loc.F("Wizard.Journal.RepairFail", err));
+            MessageBox.Show(err, Loc.T("Setup.RepairTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         else
         {
             MessageBox.Show(
-                "L'assistant de réparation a été lancé (UAC). Revenez ici ensuite et cliquez Suivant / Actualiser.",
-                "Réparation",
+                Loc.T("Wizard.Repair.Launched"),
+                Loc.T("Setup.RepairTitle"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             _ = RefreshWelcomeAsync();
@@ -328,6 +324,7 @@ public partial class SetupWizardWindow : Window
         UpdateFeedUrl = c.UpdateFeedUrl,
         CheckUpdatesOnStartup = c.CheckUpdatesOnStartup,
         AutoInstallUpdates = c.AutoInstallUpdates,
-        SetupWizardCompleted = c.SetupWizardCompleted
+        SetupWizardCompleted = c.SetupWizardCompleted,
+        UiLanguage = c.UiLanguage
     };
 }

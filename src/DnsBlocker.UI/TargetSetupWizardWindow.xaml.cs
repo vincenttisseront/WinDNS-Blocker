@@ -2,6 +2,7 @@ using System.Windows;
 using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -27,8 +28,8 @@ public partial class TargetSetupWizardWindow : Window
         _prefillHost = prefillHostname;
         var domain = MachineDomainDetector.GetDnsDomain();
         DomainHint.Text = string.IsNullOrEmpty(domain)
-            ? "Aucun domaine machine détecté (workgroup)."
-            : $"Domaine machine détecté : {domain} — ex. windc05.{domain}";
+            ? Loc.T("Target.Domain.None")
+            : Loc.F("Target.Domain.Hint", domain);
         if (!string.IsNullOrWhiteSpace(_prefillHost))
             HostnameBox.Text = _prefillHost.Trim();
         else if (!string.IsNullOrEmpty(domain))
@@ -46,23 +47,23 @@ public partial class TargetSetupWizardWindow : Window
 
         BackButton.IsEnabled = _step > 0 && !_busy;
         NextButton.Content = _step == StepCount - 1
-            ? (_prepared ? "Terminer" : "Préparer d'abord…")
-            : "Suivant";
+            ? (_prepared ? Loc.T("Btn.Finish") : Loc.T("Btn.PrepareFirst"))
+            : Loc.T("Btn.Next");
         NextButton.IsEnabled = !_busy && (_step < StepCount - 1 || _prepared);
 
         StepTitle.Text = _step switch
         {
-            0 => "Étape 1 / 4 — Serveur DNS",
-            1 => "Étape 2 / 4 — Compte administrateur",
-            2 => "Étape 3 / 4 — Test WinRM",
-            _ => "Étape 4 / 4 — Préparation distante"
+            0 => Loc.T("Target.Step.1"),
+            1 => Loc.T("Target.Step.2"),
+            2 => Loc.T("Target.Step.3"),
+            _ => Loc.T("Target.Step.4")
         };
         StepSubtitle.Text = _step switch
         {
-            0 => "Hostname / FQDN de la cible QRP.",
-            1 => "Identifiants pour Invoke-Command / WinRM (jamais journalisés).",
-            2 => "Vérifier la connectivité avant d'appliquer les ACL.",
-            _ => "ACL registre + probe politique DnsBlocker_Probe_*."
+            0 => Loc.T("Target.Sub.1"),
+            1 => Loc.T("Target.Sub.2"),
+            2 => Loc.T("Target.Sub.3"),
+            _ => Loc.T("Target.Sub.4")
         };
     }
 
@@ -81,7 +82,7 @@ public partial class TargetSetupWizardWindow : Window
         {
             if (string.IsNullOrWhiteSpace(HostnameBox.Text))
             {
-                MessageBox.Show("Indiquez un hostname DNS.", "Assistant cible", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(Loc.T("Target.NeedHost"), Loc.T("Main.TargetWizardTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -93,7 +94,7 @@ public partial class TargetSetupWizardWindow : Window
         {
             if (string.IsNullOrWhiteSpace(UsernameBox.Text) || PasswordBox.SecurePassword.Length == 0)
             {
-                MessageBox.Show("Compte et mot de passe requis.", "Assistant cible", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(Loc.T("Target.NeedCreds"), Loc.T("Main.TargetWizardTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -106,8 +107,8 @@ public partial class TargetSetupWizardWindow : Window
             if (!_winRmOk)
             {
                 var ask = MessageBox.Show(
-                    "WinRM n'a pas été validé. Continuer quand même vers la préparation ?",
-                    "Assistant cible",
+                    Loc.T("Target.WinRmUnvalidated"),
+                    Loc.T("Main.TargetWizardTitle"),
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
                 if (ask != MessageBoxResult.Yes)
@@ -129,9 +130,9 @@ public partial class TargetSetupWizardWindow : Window
 
     private async void TestWinRm_Click(object sender, RoutedEventArgs e)
     {
-        SetBusy(true, "Test WinRM…");
-        AppendLog(ActionLogBox, "Démarrage Test-WSMan / CimSession…");
-        _journal.Write($"Assistant cible — test WinRM {HostnameBox.Text.Trim()}");
+        SetBusy(true, Loc.T("Target.Busy.Test"));
+        AppendLog(ActionLogBox, Loc.T("Target.Log.TestStart"));
+        _journal.Write(Loc.F("Target.Journal.Test", HostnameBox.Text.Trim()));
         try
         {
             var result = await _client.TestTargetWinRmAsync(new TargetWinRmTestRequest
@@ -142,22 +143,22 @@ public partial class TargetSetupWizardWindow : Window
             }).ConfigureAwait(true);
 
             _winRmOk = result.Ok;
-            TestStatus.Text = result.Ok ? "WinRM/CIM OK" : "Échec WinRM/CIM";
+            TestStatus.Text = result.Ok ? Loc.T("Target.Test.Ok") : Loc.T("Target.Test.Fail");
             TestStatus.Foreground = result.Ok
                 ? System.Windows.Media.Brushes.DarkGreen
                 : System.Windows.Media.Brushes.DarkRed;
             foreach (var line in result.Log)
                 AppendLog(ActionLogBox, line);
             AppendLog(ActionLogBox, result.Message);
-            _journal.Write($"Assistant cible — WinRM {(result.Ok ? "OK" : "FAIL")}: {result.Message}");
+            _journal.Write(Loc.F("Target.Journal.WinRm", result.Ok ? "OK" : "FAIL", result.Message));
         }
         catch (Exception ex)
         {
             _winRmOk = false;
-            TestStatus.Text = "Erreur";
+            TestStatus.Text = Loc.T("Target.Test.Error");
             AppendLog(ActionLogBox, ex.Message);
-            _journal.Write("Assistant cible — WinRM erreur: " + ex.Message);
-            MessageBox.Show(ex.Message, "Test WinRM", MessageBoxButton.OK, MessageBoxImage.Error);
+            _journal.Write(Loc.F("Target.Journal.WinRmError", ex.Message));
+            MessageBox.Show(ex.Message, Loc.T("Target.TestTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -167,10 +168,10 @@ public partial class TargetSetupWizardWindow : Window
 
     private async void Prepare_Click(object sender, RoutedEventArgs e)
     {
-        SetBusy(true, "Préparation distante…");
+        SetBusy(true, Loc.T("Target.Busy.Prepare"));
         PrepareLogBox.Text = "";
-        AppendLog(PrepareLogBox, "Lancement préparation (ACL + probe QRP)…");
-        _journal.Write($"Assistant cible — prepare {HostnameBox.Text.Trim()}");
+        AppendLog(PrepareLogBox, Loc.T("Target.Log.PrepareStart"));
+        _journal.Write(Loc.F("Target.Journal.Prepare", HostnameBox.Text.Trim()));
         try
         {
             var result = await _client.PrepareDnsTargetAsync(new PrepareDnsTargetRequest
@@ -188,35 +189,36 @@ public partial class TargetSetupWizardWindow : Window
             AppendLog(PrepareLogBox, result.Message);
 
             _prepared = result.Ok;
-            PrepareStatus.Text = result.Ok ? "Cible préparée" : "Échec préparation";
+            PrepareStatus.Text = result.Ok ? Loc.T("Target.Prepare.Ok") : Loc.T("Target.Prepare.Fail");
             PrepareStatus.Foreground = result.Ok
                 ? System.Windows.Media.Brushes.DarkGreen
                 : System.Windows.Media.Brushes.DarkRed;
-            NextButton.Content = _prepared ? "Terminer" : "Préparer d'abord…";
+            NextButton.Content = _prepared ? Loc.T("Btn.Finish") : Loc.T("Btn.PrepareFirst");
             NextButton.IsEnabled = _prepared && !_busy;
-            _journal.Write($"Assistant cible — prepare {(result.Ok ? "OK" : "FAIL")}");
+            _journal.Write(Loc.F("Target.Journal.PrepareResult", result.Ok ? "OK" : "FAIL"));
 
             if (result.Ok)
             {
+                var granted = result.Target?.HubIdentityGranted is { } id
+                    ? Loc.F("Target.Prepare.Granted", id)
+                    : "";
                 MessageBox.Show(
-                    "Préparation terminée.\n\n" +
-                    "La sync QRP peut maintenant utiliser le compte du service hub.\n" +
-                    (result.Target?.HubIdentityGranted is { } id ? $"Identité autorisée : {id}\n" : ""),
-                    "Assistant cible",
+                    Loc.F("Target.Prepare.DoneBox", granted),
+                    Loc.T("Main.TargetWizardTitle"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
             }
             else
             {
-                MessageBox.Show(result.Message, "Préparation", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(result.Message, Loc.T("Target.PrepareTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
         catch (Exception ex)
         {
             _prepared = false;
             AppendLog(PrepareLogBox, ex.Message);
-            _journal.Write("Assistant cible — prepare erreur: " + ex.Message);
-            MessageBox.Show(ex.Message, "Préparation", MessageBoxButton.OK, MessageBoxImage.Error);
+            _journal.Write(Loc.F("Target.Journal.PrepareError", ex.Message));
+            MessageBox.Show(ex.Message, Loc.T("Target.PrepareTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {

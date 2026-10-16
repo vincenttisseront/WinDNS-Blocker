@@ -2,6 +2,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.ServiceProcess;
 using DnsBlocker.Core.Paths;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -13,7 +14,7 @@ internal static class InstallHealth
     public const string ServiceName = "DnsBlocker";
     public const string PipeName = "DnsBlocker";
 
-    public sealed record CheckItem(string Id, bool Ok, bool Warning, string MessageFr);
+    public sealed record CheckItem(string Id, bool Ok, bool Warning, string Message);
 
     public sealed record Report(
         string InstallRoot,
@@ -27,7 +28,6 @@ internal static class InstallHealth
     {
         var candidates = new List<string>();
 
-        // Prefer directory of this UI exe (…\DnsBlocker\UI → parent)
         try
         {
             var uiDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -70,54 +70,48 @@ internal static class InstallHealth
         var hasSvc = File.Exists(svcExe);
         var hasUi = File.Exists(uiExe);
         items.Add(hasSvc
-            ? new CheckItem("service_exe", true, false, "Binaire service présent : " + svcExe)
-            : new CheckItem("service_exe", false, false,
-                "Binaire service manquant : " + svcExe +
-                " — installation incomplète (réparez avec le bouton ci-dessous)."));
+            ? new CheckItem("service_exe", true, false, Loc.F("Health.SvcPresent", svcExe))
+            : new CheckItem("service_exe", false, false, Loc.F("Health.SvcMissing", svcExe)));
 
         items.Add(hasUi
-            ? new CheckItem("ui_exe", true, false, "Binaire interface présent : " + uiExe)
-            : new CheckItem("ui_exe", false, false, "Binaire interface manquant : " + uiExe));
+            ? new CheckItem("ui_exe", true, false, Loc.F("Health.UiPresent", uiExe))
+            : new CheckItem("ui_exe", false, false, Loc.F("Health.UiMissing", uiExe)));
 
         if (File.Exists(hostFxr) || File.Exists(Path.Combine(root, "coreclr.dll")))
         {
-            items.Add(new CheckItem("runtime", true, false,
-                "Runtime .NET embarqué (self-contained) — pas besoin d’installer .NET 8 séparément."));
+            items.Add(new CheckItem("runtime", true, false, Loc.T("Health.RuntimeEmbedded")));
         }
         else if (!hasSvc)
         {
-            items.Add(new CheckItem("runtime", false, true,
-                "Pas de runtime embarqué et pas d’exécutable service — installation MSI incomplète."));
+            items.Add(new CheckItem("runtime", false, true, Loc.T("Health.RuntimeSparse")));
         }
         else
         {
-            items.Add(new CheckItem("runtime", false, true,
-                "Pas de DLL runtime embarquées. Installez le runtime .NET 8 (Desktop pour l’UI)."));
+            items.Add(new CheckItem("runtime", false, true, Loc.T("Health.RuntimeMissing")));
         }
 
         AppPaths.EnsureDirectories();
         AppPaths.TryHardenDataDirectoryAcl();
         items.Add(new CheckItem("programdata", true, false,
-            "Dossier données OK : " + AppPaths.DataDirectory + " (ACL via SID)"));
+            Loc.F("Health.DataOk", AppPaths.DataDirectory)));
 
         var probe = ServiceProcessHelper.Probe();
         if (!probe.Exists)
         {
+            var suffix = hasSvc
+                ? Loc.T("Health.SvcNotRegistered.Repair")
+                : Loc.T("Health.SvcNotRegistered.Reinstall");
             items.Add(new CheckItem("service", false, false,
-                "Le service Windows « DnsBlocker » n’est pas enregistré." +
-                (hasSvc
-                    ? " La réparation peut l’enregistrer."
-                    : " Réinstallez / réparez d’abord les binaires.")));
+                Loc.F("Health.SvcNotRegistered", suffix)));
         }
         else if (!probe.Running)
         {
             items.Add(new CheckItem("service", false, false,
-                "Service enregistré mais arrêté (état : " + probe.Detail + ")."));
+                Loc.F("Health.SvcStopped", probe.Detail)));
         }
         else
         {
-            items.Add(new CheckItem("service", true, false,
-                "Service DnsBlocker en cours d’exécution."));
+            items.Add(new CheckItem("service", true, false, Loc.T("Health.SvcRunning")));
         }
 
         var pipeOk = false;
@@ -138,42 +132,37 @@ internal static class InstallHealth
 
         if (pipeOk)
         {
-            items.Add(new CheckItem("pipe", true, false, "Canal IPC nommé joignable."));
+            items.Add(new CheckItem("pipe", true, false, Loc.T("Health.PipeOk")));
         }
         else if (probe.Running)
         {
-            items.Add(new CheckItem("pipe", false, false,
-                "Service démarré mais le canal IPC est absent — redémarrez le service ou consultez les journaux."));
+            items.Add(new CheckItem("pipe", false, false, Loc.T("Health.PipeMissingRunning")));
         }
         else
         {
-            items.Add(new CheckItem("pipe", true, true,
-                "Canal IPC absent (normal si le service est arrêté)."));
+            items.Add(new CheckItem("pipe", true, true, Loc.T("Health.PipeMissingStopped")));
         }
 
         var sparse = !hasSvc || !hasUi;
-        var healthy = items.All(i => i.Ok || i.Warning) && hasSvc && hasUi && probe.Exists && probe.Running;
-        // Warnings alone shouldn't fail if core is OK — recompute:
-        healthy = hasSvc && hasUi && probe.Exists && probe.Running &&
-                  items.Where(i => i.Id is "service_exe" or "ui_exe" or "service").All(i => i.Ok);
+        var healthy = hasSvc && hasUi && probe.Exists && probe.Running &&
+                      items.Where(i => i.Id is "service_exe" or "ui_exe" or "service").All(i => i.Ok);
 
         return new Report(root, items, healthy, sparse, probe.Exists, probe.Running);
     }
 
     public static string? TryStartService()
     {
-        var err = ServiceProcessHelper.TryStart(TimeSpan.FromSeconds(45));
-        return err;
+        return ServiceProcessHelper.TryStart(TimeSpan.FromSeconds(45));
     }
 
     public static string? TryRegisterService(string installRoot)
     {
         if (!OperatingSystem.IsWindows())
-            return "Enregistrement du service uniquement sous Windows.";
+            return Loc.T("Health.RegisterWindowsOnly");
 
         var svcExe = Path.Combine(installRoot, "DnsBlocker.Service.exe");
         if (!File.Exists(svcExe))
-            return "Impossible d’enregistrer le service : binaire manquant.";
+            return Loc.T("Health.RegisterMissingBin");
 
         try
         {
@@ -187,12 +176,11 @@ internal static class InstallHealth
         }
         catch (Exception ex)
         {
-            return "Lecture service : " + ex.Message;
+            return Loc.F("Health.RegisterRead", ex.Message);
         }
 
         try
         {
-            // sc.exe requires a space after binPath= and quotes when the path has spaces.
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "sc.exe",
@@ -205,17 +193,17 @@ internal static class InstallHealth
             };
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null)
-                return "UAC annulé — enregistrement du service impossible.";
+                return Loc.T("Health.RegisterUac");
             p.WaitForExit(60000);
             if (p.ExitCode != 0)
-                return "sc create a échoué (code " + p.ExitCode + ").";
+                return Loc.F("Health.RegisterScFail", p.ExitCode);
 
             TryStartService();
             return null;
         }
         catch (Exception ex)
         {
-            return "Échec sc create : " + ex.Message;
+            return Loc.F("Health.RegisterScError", ex.Message);
         }
     }
 }

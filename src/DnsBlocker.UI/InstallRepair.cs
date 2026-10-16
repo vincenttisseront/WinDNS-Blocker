@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
 using DnsBlocker.Core.Updates;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -17,32 +18,32 @@ internal static class InstallRepair
         Timeout = TimeSpan.FromMinutes(10)
     };
 
-    public sealed record RepairResult(bool Ok, string MessageFr, string? LogPath);
+    public sealed record RepairResult(bool Ok, string Message, string? LogPath);
 
     public static async Task<RepairResult> RepairAsync(
         string installRoot,
         IProgress<string>? progress,
         CancellationToken ct)
     {
-        progress?.Report("Vérification des binaires…");
+        progress?.Report(Loc.T("Repair.CheckBins"));
         var svcExe = Path.Combine(installRoot, "DnsBlocker.Service.exe");
         var uiExe = Path.Combine(installRoot, "UI", "DnsBlocker.UI.exe");
 
         if (File.Exists(svcExe) && File.Exists(uiExe))
         {
-            progress?.Report("Binaires présents — enregistrement / démarrage du service…");
+            progress?.Report(Loc.T("Repair.BinsPresent"));
             var reg = InstallHealth.TryRegisterService(installRoot);
             if (reg is not null)
                 return new RepairResult(false, reg, null);
 
             var start = InstallHealth.TryStartService();
             if (start is not null)
-                return new RepairResult(false, "Service enregistré mais démarrage échoué : " + start, null);
+                return new RepairResult(false, Loc.F("Repair.StartFail", start), null);
 
-            return new RepairResult(true, "Service enregistré et démarré.", null);
+            return new RepairResult(true, Loc.T("Repair.RegisteredStarted"), null);
         }
 
-        progress?.Report("Installation incomplète détectée — téléchargement du MSI de réparation…");
+        progress?.Report(Loc.T("Repair.SparseDownload"));
         string msiPath;
         string? expectedSha = null;
         try
@@ -51,26 +52,22 @@ internal static class InstallRepair
         }
         catch (Exception ex)
         {
-            return new RepairResult(false,
-                "Téléchargement du MSI impossible : " + ex.Message +
-                "\nTéléchargez DnsBlocker-*.msi depuis GitHub Releases, puis relancez l’assistant.",
-                null);
+            return new RepairResult(false, Loc.F("Repair.DownloadFail", ex.Message), null);
         }
 
         if (!string.IsNullOrWhiteSpace(expectedSha))
         {
-            progress?.Report("Vérification SHA-256…");
+            progress?.Report(Loc.T("Repair.ShaCheck"));
             var actual = await ComputeSha256Async(msiPath, ct).ConfigureAwait(false);
             if (!string.Equals(actual, expectedSha, StringComparison.OrdinalIgnoreCase))
             {
-                return new RepairResult(false,
-                    "SHA-256 du MSI incorrect (fichier corrompu). actual=" + actual, null);
+                return new RepairResult(false, Loc.F("Repair.ShaFail", actual), null);
             }
         }
 
         var log = Path.Combine(Path.GetTempPath(),
             "dnsblocker-repair-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
-        progress?.Report("Installation MSI (UAC éventuel)…");
+        progress?.Report(Loc.T("Repair.Msiexec"));
         try
         {
             var psi = new ProcessStartInfo
@@ -82,26 +79,24 @@ internal static class InstallRepair
             };
             using var p = Process.Start(psi);
             if (p is null)
-                return new RepairResult(false, "UAC annulé — réparation MSI non lancée.", log);
+                return new RepairResult(false, Loc.T("Repair.UacCancel"), log);
             await p.WaitForExitAsync(ct).ConfigureAwait(false);
             if (p.ExitCode != 0)
             {
-                return new RepairResult(false,
-                    "msiexec a échoué (code " + p.ExitCode + "). Consultez le journal : " + log, log);
+                return new RepairResult(false, Loc.F("Repair.MsiexecFail", p.ExitCode, log), log);
             }
         }
         catch (Exception ex)
         {
-            return new RepairResult(false, "Échec msiexec : " + ex.Message, log);
+            return new RepairResult(false, Loc.F("Repair.MsiexecError", ex.Message), log);
         }
 
-        progress?.Report("Contrôle post-installation…");
+        progress?.Report(Loc.T("Repair.PostCheck"));
         await Task.Delay(1500, ct).ConfigureAwait(false);
         var report = InstallHealth.Run();
         if (!File.Exists(Path.Combine(report.InstallRoot, "DnsBlocker.Service.exe")))
         {
-            return new RepairResult(false,
-                "Après MSI, le binaire service est toujours absent. Journal : " + log, log);
+            return new RepairResult(false, Loc.F("Repair.StillMissing", log), log);
         }
 
         if (!report.ServiceRegistered)
@@ -115,10 +110,10 @@ internal static class InstallRepair
         {
             var start = InstallHealth.TryStartService();
             if (start is not null)
-                return new RepairResult(false, "MSI OK mais démarrage service : " + start, log);
+                return new RepairResult(false, Loc.F("Repair.MsiStartFail", start), log);
         }
 
-        return new RepairResult(true, "Réparation terminée. Journal : " + log, log);
+        return new RepairResult(true, Loc.F("Repair.Done", log), log);
     }
 
     private static async Task<(string Path, string? Sha256)> DownloadLatestMsiAsync(
@@ -133,7 +128,7 @@ internal static class InstallRepair
 
         try
         {
-            progress?.Report("Lecture du flux version.json…");
+            progress?.Report(Loc.T("Repair.ReadFeed"));
             using var doc = JsonDocument.Parse(await Http.GetStringAsync(feedUrl, ct).ConfigureAwait(false));
             if (doc.RootElement.TryGetProperty("msiUrl", out var u))
                 msiUrl = u.GetString();
@@ -150,7 +145,7 @@ internal static class InstallRepair
         msiUrl ??= UpdateFeedUrls.TagMsiUrl(version);
 
         var dest = Path.Combine(Path.GetTempPath(), "DnsBlocker-" + version + ".msi");
-        progress?.Report("Téléchargement : " + msiUrl);
+        progress?.Report(Loc.F("Repair.Downloading", msiUrl));
         await using (var remote = await Http.GetStreamAsync(msiUrl, ct).ConfigureAwait(false))
         await using (var local = File.Create(dest))
         {

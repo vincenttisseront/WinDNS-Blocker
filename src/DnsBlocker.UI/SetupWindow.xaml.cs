@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using DnsBlocker.Core.Paths;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -38,7 +39,7 @@ public partial class SetupWindow : Window
     private async Task RunCheckAsync()
     {
         if (_busy) return;
-        SetBusy(true, "Analyse de l'installation…");
+        SetBusy(true, Loc.T("Setup.Busy.Analyze"));
         try
         {
             var report = await Task.Run(InstallHealth.Run).ConfigureAwait(true);
@@ -46,7 +47,7 @@ public partial class SetupWindow : Window
         }
         catch (Exception ex)
         {
-            StatusTitle.Text = "Échec du contrôle";
+            StatusTitle.Text = Loc.T("Setup.CheckFailed");
             ProgressLabel.Text = ex.Message;
         }
         finally
@@ -59,17 +60,17 @@ public partial class SetupWindow : Window
     {
         if (_busy) return;
         var root = _last?.InstallRoot ?? InstallHealth.ResolveInstallRoot();
-        SetBusy(true, "Réparation en cours…");
+        SetBusy(true, Loc.T("Setup.Busy.Repair"));
         RepairButton.IsEnabled = false;
         try
         {
             var progress = new Progress<string>(msg => ProgressLabel.Text = msg);
             var result = await InstallRepair.RepairAsync(root, progress, CancellationToken.None)
                 .ConfigureAwait(true);
-            ProgressLabel.Text = result.MessageFr;
+            ProgressLabel.Text = result.Message;
             if (!result.Ok)
             {
-                MessageBox.Show(result.MessageFr, "Réparation", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(result.Message, Loc.T("Setup.RepairTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             }
 
             var report = await Task.Run(InstallHealth.Run).ConfigureAwait(true);
@@ -77,7 +78,7 @@ public partial class SetupWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Réparation", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(ex.Message, Loc.T("Setup.RepairTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -89,7 +90,7 @@ public partial class SetupWindow : Window
     private void ApplyReport(InstallHealth.Report report)
     {
         _last = report;
-        InstallRootLabel.Text = "Dossier d'installation : " + report.InstallRoot;
+        InstallRootLabel.Text = Loc.F("Setup.InstallRoot", report.InstallRoot);
 
         var rows = new List<Row>();
         foreach (var item in report.Items)
@@ -108,44 +109,40 @@ public partial class SetupWindow : Window
             }
             else
             {
-                badge = "ÉCHEC";
+                badge = Loc.T("Setup.Badge.Fail");
                 brush = (Brush)FindResource("DangerBrush");
             }
 
-            rows.Add(new Row { Badge = badge, BadgeBrush = brush, Message = item.MessageFr });
+            rows.Add(new Row { Badge = badge, BadgeBrush = brush, Message = item.Message });
         }
 
         ChecksList.ItemsSource = rows;
 
         if (report.Healthy)
         {
-            StatusTitle.Text = "Installation saine";
-            ProgressLabel.Text = "Vous pouvez ouvrir la configuration initiale (cibles DNS, listes).";
+            StatusTitle.Text = Loc.T("Setup.Healthy.Title");
+            ProgressLabel.Text = Loc.T("Setup.Healthy.Detail");
             ContinueButton.IsEnabled = true;
-            RepairButton.Content = "Revérifier / réparer";
+            RepairButton.Content = Loc.T("Btn.RepairRecheck");
         }
         else if (report.SparseInstall)
         {
-            StatusTitle.Text = "Installation incomplète";
-            ProgressLabel.Text =
-                "Le script doctor était présent mais les binaires service/UI manquent. " +
-                "Cliquez sur « Réparer l'installation » (télécharge le MSI et réinstalle sans PowerShell).";
+            StatusTitle.Text = Loc.T("Setup.Sparse.Title");
+            ProgressLabel.Text = Loc.T("Setup.Sparse.Detail");
             ContinueButton.IsEnabled = false;
-            RepairButton.Content = "Réparer l'installation";
+            RepairButton.Content = Loc.T("Btn.RepairInstall");
         }
         else if (!report.ServiceRegistered || !report.ServiceRunning)
         {
-            StatusTitle.Text = "Service non prêt";
-            ProgressLabel.Text =
-                "Les fichiers sont là, mais le service Windows n'est pas prêt. " +
-                "Utilisez « Réparer l'installation » pour l'enregistrer / le démarrer.";
+            StatusTitle.Text = Loc.T("Setup.ServiceNotReady.Title");
+            ProgressLabel.Text = Loc.T("Setup.ServiceNotReady.Detail");
             ContinueButton.IsEnabled = false;
-            RepairButton.Content = "Réparer le service";
+            RepairButton.Content = Loc.T("Btn.RepairService");
         }
         else
         {
-            StatusTitle.Text = "Problèmes détectés";
-            ProgressLabel.Text = "Corrigez les échecs ci-dessous, puis revérifiez.";
+            StatusTitle.Text = Loc.T("Setup.Problems.Title");
+            ProgressLabel.Text = Loc.T("Setup.Problems.Detail");
             ContinueButton.IsEnabled = false;
         }
     }
@@ -154,7 +151,6 @@ public partial class SetupWindow : Window
     {
         try
         {
-            // Clear setup-complete.flag so PR #6 SetupWizardGate / /firstrun opens the wizard.
             FirstRunHandoff.MarkPending("setup-assistant");
             var ui = Path.Combine(
                 _last?.InstallRoot ?? InstallHealth.ResolveInstallRoot(),
@@ -175,8 +171,8 @@ public partial class SetupWindow : Window
         catch (Exception ex)
         {
             MessageBox.Show(
-                "Impossible de lancer l'interface : " + ex.Message,
-                "WinDNS Blocker",
+                Loc.F("Setup.LaunchUiFail", ex.Message),
+                Loc.T("AppName"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             return;

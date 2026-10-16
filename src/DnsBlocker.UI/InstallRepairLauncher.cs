@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -69,11 +70,11 @@ internal static class InstallRepairLauncher
             }
 
             var p = Process.Start(psi);
-            return p is null ? "Impossible de démarrer l'assistant de réparation (UAC annulé ?)." : null;
+            return p is null ? Loc.T("Repair.LaunchFail") : null;
         }
         catch (Exception ex)
         {
-            return "Réparation : " + ex.Message;
+            return Loc.F("Repair.LaunchError", ex.Message);
         }
     }
 }

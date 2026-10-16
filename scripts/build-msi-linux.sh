@@ -152,8 +152,8 @@ by_dir["ApplicationProgramsFolder"].append(f'''      <Component Id="{shortcut_ci
           WorkingDirectory="UIDIR"
           Icon="ProductIcon.ico"
           IconIndex="0" />
-        <Shortcut Id="SetupStartMenu" Name="Assistant d'installation WinDNS Blocker"
-          Description="Diagnostic et réparation (sans PowerShell)"
+        <Shortcut Id="SetupStartMenu" Name="WinDNS Blocker Setup assistant"
+          Description="Diagnose and repair (no PowerShell required)"
           Target="[UIDIR]DnsBlocker.UI.exe"
           Arguments="/setup"
           WorkingDirectory="UIDIR"
