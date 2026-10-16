@@ -3,6 +3,8 @@ using DnsBlocker.Core.Dns;
 using DnsBlocker.Core.Ingest;
 using DnsBlocker.Core.Logging;
 using DnsBlocker.Core.Paths;
+using DnsBlocker.Core.Security;
+using DnsBlocker.Core.Setup;
 using DnsBlocker.Core.Stats;
 using DnsBlocker.Core.Storage;
 using DnsBlocker.Core.Sync;
@@ -34,6 +36,8 @@ try
     builder.Services.AddSingleton<StateStore>();
     builder.Services.AddSingleton<FileLogBuffer>();
     builder.Services.AddSingleton<BlocklistIngestor>();
+    builder.Services.AddSingleton<SecureCredentialStore>();
+    builder.Services.AddSingleton<PreparedTargetStore>();
     builder.Services.AddSingleton<IDnsPolicyProvider>(sp =>
     {
         if (OperatingSystem.IsWindows()
@@ -45,6 +49,18 @@ try
         var logger = sp.GetService<ILogger<MockDnsPolicyProvider>>();
         logger?.LogWarning("Using MockDnsPolicyProvider (non-Windows or DNSBLOCKER_USE_MOCK=1)");
         return new MockDnsPolicyProvider();
+    });
+    builder.Services.AddSingleton<ITargetPrepRunner>(sp =>
+    {
+        if (OperatingSystem.IsWindows()
+            && !string.Equals(Environment.GetEnvironmentVariable("DNSBLOCKER_USE_MOCK"), "1", StringComparison.Ordinal))
+        {
+            return new PowerShellTargetPrepRunner(sp.GetService<ILogger<PowerShellTargetPrepRunner>>());
+        }
+
+        sp.GetService<ILogger<MockTargetPrepRunner>>()
+            ?.LogWarning("Using MockTargetPrepRunner (non-Windows or DNSBLOCKER_USE_MOCK=1)");
+        return new MockTargetPrepRunner();
     });
     builder.Services.AddSingleton<SyncEngine>();
     builder.Services.AddSingleton<DnsStatsCollector>();

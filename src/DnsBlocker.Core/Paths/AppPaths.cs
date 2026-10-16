@@ -22,6 +22,8 @@ public static class AppPaths
     public static string ConfigPath => Path.Combine(DataDirectory, "config.json");
     public static string StateDbPath => Path.Combine(DataDirectory, "state.db");
     public static string LogDirectory => Path.Combine(DataDirectory, "logs");
+    public static string SecretsDirectory => Path.Combine(DataDirectory, "secrets");
+    public static string PreparedTargetsPath => Path.Combine(DataDirectory, "prepared-targets.json");
 
     /// <summary>
     /// Written when the first-run wizard finishes. Shared contract with install/repair tooling.
@@ -32,6 +34,7 @@ public static class AppPaths
     {
         Directory.CreateDirectory(DataDirectory);
         Directory.CreateDirectory(LogDirectory);
+        Directory.CreateDirectory(SecretsDirectory);
     }
 
     public static void MarkSetupComplete()

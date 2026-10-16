@@ -114,6 +114,26 @@ public partial class MainWindow : Window
         await MaybeShowSetupWizardAsync(force: true).ConfigureAwait(true);
     }
 
+    private async void TargetWizard_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var prefill = TargetsBox.Text
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(t => !string.Equals(t, "localhost", StringComparison.OrdinalIgnoreCase));
+            var wizard = new TargetSetupWizardWindow(_client, _journal, prefill) { Owner = this };
+            var ok = wizard.ShowDialog() == true;
+            _journal.Write(ok
+                ? $"Wizard cible terminé ({wizard.PreparedHostname})"
+                : "Wizard cible annulé");
+            await RefreshAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Assistant cible", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async Task MaybeShowSetupWizardAsync(bool force)
     {
         AppConfig? cfg = _config;
@@ -433,6 +453,21 @@ public partial class MainWindow : Window
             ApplyDomainResults(domains, query);
             if (!string.IsNullOrEmpty(query))
                 _journal.Write($"Actualisation — recherche domaines « {query} » → {domains.Count} résultat(s)");
+
+            try
+            {
+                var prepared = await _client.GetPreparedTargetsAsync().ConfigureAwait(true);
+                PreparedTargetsSummary.Text = prepared.Count == 0
+                    ? "Aucune cible préparée via WinRM. Utilisez « Préparer une cible » pour corriger WIN32 1011 à distance."
+                    : "Cibles préparées : " + string.Join(", ",
+                        prepared.Select(p =>
+                            p.Hostname + (p.Prepared ? " ✓" : "") +
+                            (p.CredentialsStored ? " (creds)" : "")));
+            }
+            catch
+            {
+                PreparedTargetsSummary.Text = "";
+            }
 
             _serviceConnected = true;
             ServiceHelpPanel.Visibility = Visibility.Collapsed;
