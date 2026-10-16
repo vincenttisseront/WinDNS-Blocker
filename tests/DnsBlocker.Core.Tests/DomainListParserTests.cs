@@ -40,6 +40,26 @@ public class DomainListParserTests
     }
 
     [Fact]
+    public void ParseDomains_AbpAndDomainswildFormats()
+    {
+        var content = """
+            [Adblock Plus]
+            ! Title: sample
+            ||ads.example.com^
+            ||tracker.test.org^$third-party
+            *.cdn.evil.net
+            # comment
+            plain.ok.com
+            """;
+
+        var domains = DomainListParser.ParseDomains(content);
+        Assert.Contains("ads.example.com", domains);
+        Assert.Contains("tracker.test.org", domains);
+        Assert.Contains("*.cdn.evil.net", domains);
+        Assert.Contains("plain.ok.com", domains);
+    }
+
+    [Fact]
     public void ApplyWhitelist_RemovesExactAndWildcardParents()
     {
         var blocked = new[] { "a.ads.com", "safe.example.com", "evil.com" };
