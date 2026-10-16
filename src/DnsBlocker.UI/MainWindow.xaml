@@ -39,6 +39,10 @@
               <StackPanel>
                 <TextBlock x:Name="StatusSummary" Text="Connexion au service…" FontWeight="SemiBold"/>
                 <TextBlock x:Name="StatusDetails" Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                <StackPanel x:Name="ServiceHelpPanel" Orientation="Horizontal" Margin="0,12,0,0" Visibility="Collapsed">
+                  <Button x:Name="StartServiceButton" Content="Démarrer le service" Click="StartService_Click"/>
+                  <Button Content="Réessayer la connexion" Click="Refresh_Click"/>
+                </StackPanel>
               </StackPanel>
             </Border>
             <TextBlock Text="Statut par serveur DNS" FontWeight="SemiBold" Margin="0,0,0,8"/>

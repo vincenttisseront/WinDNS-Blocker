@@ -29,12 +29,8 @@ public sealed class IpcServer
             NamedPipeServerStream? server = null;
             try
             {
-                server = new NamedPipeServerStream(
-                    _pipeName,
-                    PipeDirection.InOut,
-                    NamedPipeServerStream.MaxAllowedServerInstances,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                // Must allow Authenticated Users — default LocalSystem ACL blocks the WPF UI.
+                server = PipeSecurityFactory.CreateServer(_pipeName);
 
                 await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
                 var connected = server;
