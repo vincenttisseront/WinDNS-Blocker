@@ -38,7 +38,7 @@ dotnet build src/DnsBlocker.Core src/DnsBlocker.Service tests/DnsBlocker.Core.Te
 dotnet test tests/DnsBlocker.Core.Tests
 ```
 
-Product version is centralized in `Directory.Build.props` (`Version`, default `1.0.0`).
+Product version is centralized in `Directory.Build.props` (`Version`).
 
 ## MSI release (Windows + WiX)
 
@@ -64,9 +64,20 @@ Outputs:
 
 The MSI installs:
 
-- Service → `C:\Program Files\DnsBlocker` (Windows Service **DnsBlocker**, started at install)
+- Service → `C:\Program Files\DnsBlocker` (Windows Service **DnsBlocker** as LocalSystem, started at install)
 - UI → `C:\Program Files\DnsBlocker\UI` (+ Start Menu shortcut)
+- Tools → `doctor.ps1`, `Verify-Install.cmd` under `C:\Program Files\DnsBlocker`
 - Data dir → `C:\ProgramData\DnsBlocker\logs`
+
+**Runtime:** release MSIs built with `build-msi-linux.sh` (and `build-release.ps1 -SelfContained`) are **self-contained win-x64** — no separate .NET 8 install is required. Framework-dependent builds need .NET 8 Runtime (+ Desktop Runtime for the UI).
+
+**After install / UI won’t open:** run elevated:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Program Files\DnsBlocker\doctor.ps1" -StartServiceIfStopped
+```
+
+Check `C:\ProgramData\DnsBlocker\logs\service-startup-failure.log` and `ui-crash.log` if the UI closes immediately.
 
 **Upgrades:** MajorUpgrade (`AllowSameVersionUpgrades`, schedule `afterInstallInitialize`) stops the service before replacing files so the hub survives in-place upgrades. Fixed `UpgradeCode` in `installer/Package.wxs`.
 
@@ -91,15 +102,19 @@ Requires `wixl` (`apt install wixl`). This is self-contained win-x64 (service + 
 
 ```powershell
 # Elevated — after building or downloading the MSI
-msiexec /i artifacts\DnsBlocker-1.0.0.msi /qn
-# or double-click the MSI
+msiexec /i DnsBlocker-1.0.1.msi
+# Then verify:
+powershell -ExecutionPolicy Bypass -File "C:\Program Files\DnsBlocker\doctor.ps1" -StartServiceIfStopped
 ```
+
+Server requirement: **Windows Server with Desktop Experience** (WPF UI). Server Core cannot host the UI.
 
 ### Alternative: scripted copy (dev)
 
 ```powershell
-# From an elevated PowerShell session
+# From an elevated PowerShell session (self-contained by default)
 .\scripts\install.ps1
+.\scripts\doctor.ps1 -StartServiceIfStopped
 ```
 
 Then open `C:\Program Files\DnsBlocker\UI\DnsBlocker.UI.exe` (or the Start Menu shortcut), set DNS targets (one FQDN per line), save, and click **Mettre à jour maintenant**.
@@ -108,7 +123,7 @@ Config/state:
 
 - `C:\ProgramData\DnsBlocker\config.json`
 - `C:\ProgramData\DnsBlocker\state.db`
-- `C:\ProgramData\DnsBlocker\logs\`
+- `C:\ProgramData\DnsBlocker\logs\` (includes `service-startup-failure.log` / `ui-crash.log` on failure)
 
 ### Development mock provider
 

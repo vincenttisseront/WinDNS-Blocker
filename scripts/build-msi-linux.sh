@@ -40,6 +40,9 @@ find "$STAGE/DnsBlocker" -name '*.pdb' -delete
 find "$UI_OUT" -maxdepth 1 -type f ! -name '*.pdb' -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
 find "$UI_OUT" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
 find "$STAGE/DnsBlocker/UI" -name '*.pdb' -delete
+# Post-install tools
+cp -a "$ROOT/scripts/doctor.ps1" "$STAGE/DnsBlocker/doctor.ps1"
+cp -a "$ROOT/scripts/Verify-Install.cmd" "$STAGE/DnsBlocker/Verify-Install.cmd"
 # ensure logs placeholder
 : > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
 
@@ -86,7 +89,7 @@ for p in all_files:
         body += '''        <ServiceInstall Id="DnsBlockerServiceInstall" Name="DnsBlocker"
           DisplayName="WinDNS Blocker Hub"
           Description="WinDNS Blocker hub service"
-          Start="auto" Type="ownProcess" ErrorControl="normal" Vital="yes" />
+          Account="LocalSystem" Start="auto" Type="ownProcess" ErrorControl="normal" Vital="yes" />
         <ServiceControl Id="DnsBlockerServiceControl" Name="DnsBlocker"
           Start="install" Stop="both" Remove="uninstall" Wait="yes" />
 '''

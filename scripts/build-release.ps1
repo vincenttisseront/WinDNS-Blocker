@@ -114,11 +114,14 @@ else {
     $servicePublishDir = $serviceOut.TrimEnd('\') + '\'
     $uiPublishDir = $uiOut.TrimEnd('\') + '\'
 
+    $toolsDir = (Join-Path $repoRoot "scripts").TrimEnd('\') + '\'
+
     dotnet build $installerProj `
         -c $Configuration `
         -p:Version=$Version `
         -p:ServicePublishDir=$servicePublishDir `
-        -p:UiPublishDir=$uiPublishDir
+        -p:UiPublishDir=$uiPublishDir `
+        -p:ToolsDir=$toolsDir
     if ($LASTEXITCODE -ne 0) { throw "WiX MSI build failed (exit $LASTEXITCODE)." }
 
     if (-not (Test-Path $msiPath)) {

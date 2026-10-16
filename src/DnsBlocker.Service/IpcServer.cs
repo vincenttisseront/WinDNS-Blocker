@@ -4,6 +4,7 @@ using System.Text.Json;
 using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Paths;
 using Microsoft.Extensions.Logging;
+// PipeFactory lives in DnsBlocker.Core.Ipc
 
 namespace DnsBlocker.Service;
 
@@ -29,12 +30,8 @@ public sealed class IpcServer
             NamedPipeServerStream? server = null;
             try
             {
-                server = new NamedPipeServerStream(
-                    _pipeName,
-                    PipeDirection.InOut,
-                    NamedPipeServerStream.MaxAllowedServerInstances,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                // ACL must allow Authenticated Users — default LocalSystem pipes often block the UI.
+                server = PipeFactory.CreateServer(_pipeName);
 
                 await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
                 var connected = server;

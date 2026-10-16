@@ -34,6 +34,8 @@
     <Feature Id="ProductFeature" Title="WinDNS Blocker" Description="Hub service and WPF UI" Level="1">
       <ComponentGroupRef Id="ServiceComponents" />
       <ComponentGroupRef Id="UiComponents" />
+      <ComponentGroupRef Id="ToolsComponents" />
+      <ComponentRef Id="AppDataRootComponent" />
       <ComponentRef Id="LogsFolderComponent" />
       <ComponentRef Id="ApplicationShortcut" />
     </Feature>
@@ -65,10 +67,12 @@
           Name="DnsBlocker"
           DisplayName="WinDNS Blocker Hub"
           Description="Synchronizes Steve Jenkins-style DNS blocklists into Windows DNS Query Resolution Policies across a farm of DNS servers."
+          Account="LocalSystem"
           Start="auto"
           Type="ownProcess"
           ErrorControl="normal"
-          Vital="yes" />
+          Vital="yes"
+          Interactive="no" />
         <ServiceControl
           Id="DnsBlockerServiceControl"
           Name="DnsBlocker"
@@ -94,8 +98,30 @@
     </ComponentGroup>
   </Fragment>
 
-  <!-- ProgramData\DnsBlocker\logs -->
+  <!-- Tools: doctor + verify next to the service -->
   <Fragment>
+    <ComponentGroup Id="ToolsComponents" Directory="INSTALLFOLDER">
+      <Component Id="DoctorScript" Guid="E7B0F4D5-6A8C-7D1E-2F3A-4B5C6D7E8F90">
+        <File Id="DoctorPs1" Source="!(bindpath.ToolsDir)doctor.ps1" KeyPath="yes" />
+      </Component>
+      <Component Id="VerifyCmd" Guid="F8C1A5E6-7B9D-8E2F-3A4B-5C6D7E8F9012">
+        <File Id="VerifyInstallCmd" Source="!(bindpath.ToolsDir)Verify-Install.cmd" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- ProgramData\DnsBlocker (+ logs) -->
+  <Fragment>
+    <Component Id="AppDataRootComponent" Directory="AppDataRoot" Guid="A1B2C3D4-5E6F-7081-92A3-B4C5D6E7F809">
+      <CreateFolder />
+      <RegistryValue
+        Root="HKLM"
+        Key="Software\DnsBlocker"
+        Name="AppDataRoot"
+        Type="integer"
+        Value="1"
+        KeyPath="yes" />
+    </Component>
     <Component Id="LogsFolderComponent" Directory="LogsFolder" Guid="C5F8D2B3-4E6A-5B9C-0D1E-2F3A4B5C6D7E">
       <CreateFolder />
       <RegistryValue

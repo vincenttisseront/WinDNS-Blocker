@@ -163,8 +163,14 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             StatusSummary.Text = "Service injoignable";
-            StatusDetails.Text = ex.Message + "\n\nDémarrez le service DnsBlocker (install.ps1) puis réessayez.";
-            UpdateStatusLine.Text = "Mise à jour : service injoignable";
+            StatusDetails.Text =
+                ex.Message +
+                "\n\nActions :\n" +
+                "1. Ouvrir une invite admin : Start-Service DnsBlocker\n" +
+                "2. Lancer le diagnostic :\n" +
+                @"   powershell -ExecutionPolicy Bypass -File ""C:\Program Files\DnsBlocker\doctor.ps1"" -StartServiceIfStopped" +
+                "\n3. Consulter C:\\ProgramData\\DnsBlocker\\logs\\ (service-startup-failure.log / ui-crash.log)";
+            UpdateStatusLine.Text = "Mise à jour : service injoignable — lancez doctor.ps1";
         }
     }
 
