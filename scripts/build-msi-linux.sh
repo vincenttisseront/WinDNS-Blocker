@@ -56,7 +56,7 @@ find "$UI_OUT" -maxdepth 1 -type f ! -name '*.pdb' -exec cp -a {} "$STAGE/DnsBlo
 find "$UI_OUT" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
 find "$STAGE/DnsBlocker/UI" -name '*.pdb' -delete
 # Post-install tools (REQUIRED — v1.0.3 logo MSI omitted these; never skip)
-for tool in doctor.ps1 Verify-Install.cmd; do
+for tool in doctor.ps1 Verify-Install.cmd Repair-DnsBlocker.ps1 Install-DnsBlocker.ps1; do
   if [[ ! -f "$ROOT/scripts/$tool" ]]; then
     echo "FAIL: missing required tool scripts/$tool" >&2
     exit 1
@@ -67,7 +67,7 @@ if [[ ! -f "$STAGE/DnsBlocker/doctor.ps1" ]] || [[ ! -f "$STAGE/DnsBlocker/Verif
   echo "FAIL: tools not staged under $STAGE/DnsBlocker" >&2
   exit 1
 fi
-echo "Staged tools: doctor.ps1 + Verify-Install.cmd"
+echo "Staged tools: doctor.ps1 + Verify-Install.cmd + Repair-DnsBlocker.ps1 + Install-DnsBlocker.ps1"
 # ensure logs placeholder
 : > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
 
@@ -232,6 +232,9 @@ trap 'rm -rf "$TMP_EXTRACT"' EXIT
 if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
   DOCTOR=$(find "$TMP_EXTRACT" -iname 'doctor.ps1' | head -1 || true)
   VERIFY=$(find "$TMP_EXTRACT" -iname 'Verify-Install.cmd' | head -1 || true)
+  SVC_EXE=$(find "$TMP_EXTRACT" -path '*/DnsBlocker/DnsBlocker.Service.exe' | head -1 || true)
+  UI_EXE=$(find "$TMP_EXTRACT" -path '*/DnsBlocker/UI/DnsBlocker.UI.exe' | head -1 || true)
+  HOSTFXR=$(find "$TMP_EXTRACT" -path '*/DnsBlocker/hostfxr.dll' | head -1 || true)
   if [[ -z "$DOCTOR" ]]; then
     echo "FAIL: MSI is missing doctor.ps1 (would install without C:\\Program Files\\DnsBlocker\\doctor.ps1)" >&2
     exit 1
@@ -240,10 +243,34 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
     echo "FAIL: MSI is missing Verify-Install.cmd" >&2
     exit 1
   fi
+  if [[ -z "$SVC_EXE" ]]; then
+    echo "FAIL: MSI is missing DnsBlocker/DnsBlocker.Service.exe (sparse-install risk)" >&2
+    exit 1
+  fi
+  if [[ -z "$UI_EXE" ]]; then
+    echo "FAIL: MSI is missing DnsBlocker/UI/DnsBlocker.UI.exe" >&2
+    exit 1
+  fi
+  if [[ -z "$HOSTFXR" ]]; then
+    echo "FAIL: MSI is missing DnsBlocker/hostfxr.dll (self-contained runtime)" >&2
+    exit 1
+  fi
+  # Directory table must not use DefaultDir='.' for ProgramFiles64Folder (breaks PF resolution)
+  if command -v msiinfo >/dev/null 2>&1; then
+    DIR_ROW=$(msiinfo export "$MSI" Directory 2>/dev/null | awk -F'\t' '$1=="ProgramFiles64Folder"{print $0}')
+    if echo "$DIR_ROW" | grep -Eq $'\t\\.\t|\t\\.$'; then
+      echo "FAIL: ProgramFiles64Folder DefaultDir is '.' — sparse Program Files installs" >&2
+      echo "$DIR_ROW" >&2
+      exit 1
+    fi
+    echo "OK: Directory ProgramFiles64Folder -> $DIR_ROW"
+  fi
   echo "OK: MSI contains $DOCTOR"
   echo "OK: MSI contains $VERIFY"
+  echo "OK: MSI contains $SVC_EXE"
+  echo "OK: MSI contains $UI_EXE"
+  echo "OK: MSI contains $HOSTFXR"
 
-  UI_EXE=$(find "$TMP_EXTRACT" -iname 'DnsBlocker.UI.exe' | head -1 || true)
   if [[ -n "$UI_EXE" ]] && command -v wrestool >/dev/null 2>&1; then
     wrestool -l "$UI_EXE" | grep -Eq 'group_icon|--type=14' \
       && echo "OK: extracted UI exe has group_icon" \
@@ -263,7 +290,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "WinDNS Blocker release build (self-contained win-x64).",
+  "releaseNotes": "Repair sparse installs: Repair-DnsBlocker.ps1 + MSI layout gates for Service/UI/hostfxr.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

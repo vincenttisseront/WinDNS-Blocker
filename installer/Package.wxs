@@ -102,7 +102,7 @@
     </ComponentGroup>
   </Fragment>
 
-  <!-- Tools: doctor + verify next to the service -->
+  <!-- Tools: doctor + verify + repair next to the service -->
   <Fragment>
     <ComponentGroup Id="ToolsComponents" Directory="INSTALLFOLDER">
       <Component Id="DoctorScript" Guid="E7B0F4D5-6A8C-7D1E-2F3A-4B5C6D7E8F90">
@@ -110,6 +110,12 @@
       </Component>
       <Component Id="VerifyCmd" Guid="F8C1A5E6-7B9D-8E2F-3A4B-5C6D7E8F9012">
         <File Id="VerifyInstallCmd" Source="!(bindpath.ToolsDir)Verify-Install.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="RepairScript" Guid="A9D2B6F7-8C0E-9F3A-4B5C-6D7E8F901234">
+        <File Id="RepairPs1" Source="!(bindpath.ToolsDir)Repair-DnsBlocker.ps1" KeyPath="yes" />
+      </Component>
+      <Component Id="InstallWrapper" Guid="B0E3C7A8-9D1F-0A4B-5C6D-7E8F90123456">
+        <File Id="InstallWrapperPs1" Source="!(bindpath.ToolsDir)Install-DnsBlocker.ps1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>

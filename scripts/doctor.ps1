@@ -133,9 +133,10 @@ if (Test-Path -LiteralPath $svcExe) {
 }
 else {
     Write-Bad ('Missing service binary: ' + $svcExe)
-    Write-Bad 'The MSI did not lay down DnsBlocker.Service.exe. Reinstall with logging:'
-    Write-Bad '  msiexec /i DnsBlocker-1.0.5.msi /l*v %TEMP%\dnsblocker-install.log'
-    Write-Bad 'Then open the log and search for InstallFiles / return value 3.'
+    Write-Bad 'Incomplete/sparse install (doctor present but Service.exe missing). Repair with 1.0.6+:'
+    Write-Bad '  irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/release/1.0.4/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1'
+    Write-Bad '  powershell -ExecutionPolicy Bypass -File $env:TEMP\Repair-DnsBlocker.ps1'
+    Write-Bad 'Or: msiexec /i DnsBlocker-1.0.6.msi /l*v %TEMP%\dnsblocker-install.log'
 }
 
 if (Test-Path -LiteralPath $uiExe) {
@@ -185,10 +186,15 @@ foreach ($dir in @($data, $logs)) {
     }
 }
 
-# ACL via SIDs (works on FR/EN): SYSTEM, Administrators, Users
+# ACL via SIDs (works on FR/EN): SYSTEM, Administrators, Users — stderr suppressed (icacls noise)
 try {
-    & icacls.exe $data /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
-    Write-Ok ('ACL refreshed on ' + $data + ' (SYSTEM/Administrators Full, Users RX via SID)')
+    $aclOut = & icacls.exe $data /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn ('icacls exit ' + $LASTEXITCODE + ': ' + (($aclOut | Out-String).Trim()))
+    }
+    else {
+        Write-Ok ('ACL refreshed on ' + $data + ' (SYSTEM/Administrators Full, Users RX via SID)')
+    }
 }
 catch {
     Write-Warn ('Could not set ACL on ' + $data + ' : ' + $_.Exception.Message)
@@ -303,8 +309,9 @@ if ($failCount -eq 0) {
 }
 else {
     Write-Host ('Doctor result: FAILED (' + $failCount + ' error(s), ' + $warnCount + ' warning(s))') -ForegroundColor Red
-    Write-Host 'If binaries are missing, uninstall any partial product then reinstall:'
-    Write-Host '  msiexec /x {product-code}   OR Settings - Apps - WinDNS Blocker - Uninstall'
-    Write-Host '  msiexec /i DnsBlocker-1.0.5.msi /l*v %TEMP%\dnsblocker-install.log'
+    Write-Host 'If binaries are missing, run Repair-DnsBlocker.ps1 (downloads MSI + reinstalls):'
+    Write-Host '  irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/release/1.0.4/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1'
+    Write-Host '  powershell -ExecutionPolicy Bypass -File $env:TEMP\Repair-DnsBlocker.ps1'
+    Write-Host 'Or uninstall then: msiexec /i DnsBlocker-1.0.6.msi /l*v %TEMP%\dnsblocker-install.log'
     exit 1
 }

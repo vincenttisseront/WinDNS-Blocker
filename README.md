@@ -101,10 +101,17 @@ Requires `wixl` (`apt install wixl`). This is self-contained win-x64 (service + 
 ### Preferred: MSI
 
 ```powershell
-# Elevated — after building or downloading the MSI
-msiexec /i DnsBlocker-1.0.1.msi
-# Then verify:
+# Elevated — after downloading the release MSI
+msiexec /i DnsBlocker-1.0.6.msi /l*v $env:TEMP\dnsblocker-install.log
 powershell -ExecutionPolicy Bypass -File "C:\Program Files\DnsBlocker\doctor.ps1" -StartServiceIfStopped
+```
+
+**Broken/sparse install** (`doctor.ps1` present but `DnsBlocker.Service.exe` missing):
+
+```powershell
+# Elevated — downloads MSI, uninstalls partial product, reinstalls, runs doctor
+irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/release/1.0.4/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\Repair-DnsBlocker.ps1
 ```
 
 Server requirement: **Windows Server with Desktop Experience** (WPF UI). Server Core cannot host the UI.

@@ -44,7 +44,8 @@ if (-not (Test-Path (Join-Path $uiSrc "DnsBlocker.UI.exe"))) {
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot "UI") | Out-Null
 New-Item -ItemType Directory -Force -Path "C:\ProgramData\DnsBlocker\logs" | Out-Null
-icacls "C:\ProgramData\DnsBlocker" /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" "BUILTIN\Administrators:(OI)(CI)F" "BUILTIN\Users:(OI)(CI)RX" | Out-Null
+# SIDs work on FR/EN Server (BUILTIN\Administrators often fails as "Administrateurs")
+& icacls.exe "C:\ProgramData\DnsBlocker" /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' 2>$null | Out-Null
 
 Write-Host "Copying binaries to $InstallRoot ..."
 Copy-Item -Path (Join-Path $serviceSrc "*") -Destination $InstallRoot -Recurse -Force
