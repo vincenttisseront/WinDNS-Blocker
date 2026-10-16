@@ -340,7 +340,7 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
     # Gate: RemoveExistingProducts must be AFTER InstallFinalize (seq > 6600).
     # Early REP (1401) + locked UI.exe = missing shortcut / half-installed product.
     REP_SEQ=$(msiinfo export "$MSI" InstallExecuteSequence 2>/dev/null \
-      | awk -F'\t' '$1=="RemoveExistingProducts"{print $3}')
+      | awk -F'\t' '$1=="RemoveExistingProducts"{gsub(/\r/,"",$3); print $3; exit}')
     if [[ -z "$REP_SEQ" ]]; then
       echo "FAIL: RemoveExistingProducts missing from InstallExecuteSequence" >&2
       exit 1
