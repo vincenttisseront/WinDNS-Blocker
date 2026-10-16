@@ -16,6 +16,18 @@ public sealed class AppConfig
 
     public List<string> ExtraWhitelistUrls { get; set; } = [];
 
+    /// <summary>kboghdady YouTube ads (pi-hole list). Re-fetched on scheduled sync / ApplyNow.</summary>
+    public bool CuratedYoutubeAds { get; set; } = true;
+
+    /// <summary>OISD big (domainswild). Default on — broad ads/trackers.</summary>
+    public bool CuratedOisdBig { get; set; } = true;
+
+    /// <summary>OISD NSFW (domainswild). Default on — family NSFW, lower FP than adult dumps.</summary>
+    public bool CuratedOisdNsfw { get; set; } = true;
+
+    /// <summary>Chadmayfield porn_all. Default off — large adult list; explicit opt-in.</summary>
+    public bool CuratedChadmayfieldPorn { get; set; } = false;
+
     public List<string> DnsTargets { get; set; } = ["localhost"];
 
     /// <summary>DENY or IGNORE</summary>

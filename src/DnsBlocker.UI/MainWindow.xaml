@@ -115,6 +115,16 @@
                 <TextBox x:Name="WhitelistsUrlBox"/>
                 <TextBlock Text="regex.txt (non supporté par Windows DNS QRP — informatif)" Foreground="{StaticResource MutedBrush}"/>
                 <TextBox x:Name="RegexUrlBox" IsReadOnly="True" Opacity="0.7"/>
+                <TextBlock Text="Listes supplémentaires (curated)" FontWeight="SemiBold" Margin="0,12,0,8"/>
+                <TextBlock Text="Rechargées à chaque sync quotidienne (heure ci-dessous) et via « Mettre à jour maintenant »."
+                           Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                <CheckBox x:Name="CuratedYoutubeAdsCheck" Content="YouTube ads (pi-hole list — kboghdady)" Margin="0,0,0,4"/>
+                <CheckBox x:Name="CuratedOisdBigCheck" Content="OISD big (ads / trackers)" Margin="0,0,0,4"/>
+                <CheckBox x:Name="CuratedOisdNsfwCheck" Content="OISD NSFW (famille / faible FP)" Margin="0,0,0,4"/>
+                <CheckBox x:Name="CuratedChadmayfieldCheck" Content="Chadmayfield porn (adulte, ~1,9M — opt-in)" Margin="0,0,0,8"/>
+                <TextBlock Text="URLs extra personnalisées (une par ligne, en plus des curated)" Foreground="{StaticResource MutedBrush}"/>
+                <TextBox x:Name="ExtraBlocklistUrlsBox" AcceptsReturn="True" Height="72" VerticalScrollBarVisibility="Auto"
+                         TextWrapping="NoWrap" Margin="0,0,0,8"/>
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
