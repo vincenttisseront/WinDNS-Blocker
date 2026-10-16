@@ -346,7 +346,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Fix blank Unexpected error dialog + richer ui-crash.log (PR #18). Property CA Setup launch retained (type 242).",
+  "releaseNotes": "QRP sync must actually block — Succeeded ≠ Enabled (PR #19). Property CA Setup launch retained (type 242).",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
