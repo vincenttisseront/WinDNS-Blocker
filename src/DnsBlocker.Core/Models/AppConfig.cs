@@ -33,4 +33,16 @@ public sealed class AppConfig
     public bool EnableStatsCollection { get; set; } = false;
 
     public string PolicyNamePrefix { get; set; } = "DnsBlocker_";
+
+    /// <summary>URL of version.json feed for application updates. Empty disables checks.</summary>
+    public string UpdateFeedUrl { get; set; } = "";
+
+    /// <summary>When true, the UI checks for updates on startup (if feed URL is set).</summary>
+    public bool CheckUpdatesOnStartup { get; set; } = true;
+
+    /// <summary>
+    /// When true, the elevated service silently installs updates via msiexec /qn.
+    /// When false, only notify (UI / logs).
+    /// </summary>
+    public bool AutoInstallUpdates { get; set; } = false;
 }

@@ -15,11 +15,17 @@
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <StackPanel>
-          <TextBlock Text="WinDNS Blocker" FontSize="22" FontWeight="SemiBold" Foreground="#123"/>
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="WinDNS Blocker" FontSize="22" FontWeight="SemiBold" Foreground="#123"/>
+            <TextBlock x:Name="VersionLabel" Text="" FontSize="14" VerticalAlignment="Bottom" Margin="12,0,0,2"
+                       Foreground="{StaticResource MutedBrush}"/>
+          </StackPanel>
           <TextBlock Text="Hub unique → politiques QRP sur X serveurs DNS" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
+          <TextBlock x:Name="UpdateStatusLine" Text="" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <Button Content="Actualiser" Click="Refresh_Click"/>
+          <Button Content="Vérifier les mises à jour" Click="CheckUpdates_Click"/>
           <Button Content="Mettre à jour maintenant" Click="ApplyNow_Click" FontWeight="SemiBold"/>
         </StackPanel>
       </Grid>
@@ -101,6 +107,18 @@
                     <CheckBox x:Name="StatsCheck" Content="Activer la collecte de stats (ETW DNS)" Margin="0,0,0,8"/>
                   </StackPanel>
                 </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
+              <StackPanel>
+                <TextBlock Text="Mises à jour de l'application" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Text="URL du flux version.json" Foreground="{StaticResource MutedBrush}"/>
+                <TextBox x:Name="UpdateFeedUrlBox"/>
+                <CheckBox x:Name="CheckUpdatesOnStartupBox" Content="Vérifier les mises à jour au démarrage" Margin="0,8,0,4"/>
+                <CheckBox x:Name="AutoInstallUpdatesBox" Content="Installer automatiquement (service silencieux msiexec /qn)" Margin="0,0,0,4"/>
+                <TextBlock Text="Sans installation auto, seule une notification est affichée. L'installation depuis l'UI passe par le service (déjà élevé) ; un installateur local utiliserait UAC (runas)."
+                           Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
               </StackPanel>
             </Border>
 

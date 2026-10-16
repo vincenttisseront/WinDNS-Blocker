@@ -32,18 +32,68 @@ dotnet test tests/DnsBlocker.Core.Tests
 On Linux (CI / this cloud agent), build Core + Service + tests only — WPF requires Windows:
 
 ```bash
+./scripts/build.sh
+# or:
 dotnet build src/DnsBlocker.Core src/DnsBlocker.Service tests/DnsBlocker.Core.Tests
 dotnet test tests/DnsBlocker.Core.Tests
 ```
 
+Product version is centralized in `Directory.Build.props` (`Version`, default `1.0.0`).
+
+## MSI release (Windows + WiX)
+
+Release builds produce a Windows Installer package via [WiX Toolset 5](https://wixtoolset.org/) (`installer/DnsBlocker.Installer.wixproj`).
+
+**Prerequisites (Windows):** .NET 8 SDK, WiX Toolset 5 (restored automatically via `WixToolset.Sdk/5.0.2` on first `dotnet build` of the installer).
+
+```powershell
+# Publish Service + UI (win-x64) and build artifacts/DnsBlocker-<Version>.msi
+.\scripts\build-release.ps1
+.\scripts\build-release.ps1 -Version 1.2.0 -UpdateFeedBaseUrl https://example.com/releases
+
+# Optional: self-contained publish
+.\scripts\build-release.ps1 -SelfContained
+```
+
+Outputs:
+
+| Artifact | Path |
+|----------|------|
+| MSI | `artifacts/DnsBlocker-<Version>.msi` |
+| Updater feed | `artifacts/version.json` (`version`, `msiUrl`, `sha256`, `releaseNotes`, `publishedAt`) |
+
+The MSI installs:
+
+- Service → `C:\Program Files\DnsBlocker` (Windows Service **DnsBlocker**, started at install)
+- UI → `C:\Program Files\DnsBlocker\UI` (+ Start Menu shortcut)
+- Data dir → `C:\ProgramData\DnsBlocker\logs`
+
+**Upgrades:** MajorUpgrade (`AllowSameVersionUpgrades`, schedule `afterInstallInitialize`) stops the service before replacing files so the hub survives in-place upgrades. Fixed `UpgradeCode` in `installer/Package.wxs`.
+
+### In-app updates
+
+Point `UpdateFeedUrl` in config (or the Configuration tab) at a published `version.json`. The service checks about daily; if `AutoInstallUpdates` is true it runs silent `msiexec /i … /qn` as LocalSystem (MSI ServiceControl stops/restarts the hub — do not stop the service yourself). With auto-install off, the UI notifies only (`Vérifier les mises à jour` / startup check). IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
+
+**Linux limitation:** `./scripts/build.sh` / `build-release.ps1` can publish the Service for `win-x64` and leave WiX sources ready, but **MSI compilation and WPF UI publish require Windows**.
+
 ## Install (hub)
+
+### Preferred: MSI
+
+```powershell
+# Elevated — after building or downloading the MSI
+msiexec /i artifacts\DnsBlocker-1.0.0.msi /qn
+# or double-click the MSI
+```
+
+### Alternative: scripted copy (dev)
 
 ```powershell
 # From an elevated PowerShell session
 .\scripts\install.ps1
 ```
 
-Then open `C:\Program Files\DnsBlocker\UI\DnsBlocker.UI.exe`, set DNS targets (one FQDN per line), save, and click **Mettre à jour maintenant**.
+Then open `C:\Program Files\DnsBlocker\UI\DnsBlocker.UI.exe` (or the Start Menu shortcut), set DNS targets (one FQDN per line), save, and click **Mettre à jour maintenant**.
 
 Config/state:
 
@@ -64,5 +114,10 @@ Set `DNSBLOCKER_USE_MOCK=1` to force the in-memory DNS provider (also automatic 
 ## Uninstall
 
 ```powershell
+# MSI
+msiexec /x artifacts\DnsBlocker-1.0.0.msi /qn
+# or Apps & Features
+
+# Scripted install
 .\scripts\uninstall.ps1
 ```

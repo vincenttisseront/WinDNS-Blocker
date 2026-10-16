@@ -4,6 +4,7 @@ using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Stats;
 using DnsBlocker.Core.Storage;
 using DnsBlocker.Core.Sync;
+using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.Service;
 
@@ -17,21 +18,29 @@ public sealed class HubRuntime
     private readonly StateStore _state;
     private readonly FileLogBuffer _logs;
     private readonly DnsStatsCollector _stats;
+    private readonly IUpdateChecker _updateChecker;
+    private readonly UpdateInstaller _updateInstaller;
     private readonly object _configGate = new();
+    private readonly object _updateGate = new();
     private AppConfig _config;
+    private UpdateCheckResult? _lastUpdateCheck;
 
     public HubRuntime(
         ConfigStore configStore,
         SyncEngine syncEngine,
         StateStore state,
         FileLogBuffer logs,
-        DnsStatsCollector stats)
+        DnsStatsCollector stats,
+        IUpdateChecker updateChecker,
+        UpdateInstaller updateInstaller)
     {
         _configStore = configStore;
         _syncEngine = syncEngine;
         _state = state;
         _logs = logs;
         _stats = stats;
+        _updateChecker = updateChecker;
+        _updateInstaller = updateInstaller;
         _config = _configStore.Load();
     }
 
@@ -129,6 +138,87 @@ public sealed class HubRuntime
         return next.ToUniversalTime();
     }
 
+    public string GetAppVersion() => AppVersion.Current;
+
+    public UpdateCheckResult? GetLastUpdateCheck()
+    {
+        lock (_updateGate)
+            return _lastUpdateCheck;
+    }
+
+    public async Task<UpdateCheckResult> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        var cfg = GetConfig();
+        var result = await _updateChecker.CheckAsync(cfg.UpdateFeedUrl, AppVersion.Current, cancellationToken)
+            .ConfigureAwait(false);
+        lock (_updateGate)
+            _lastUpdateCheck = result;
+        if (result.UpdateAvailable)
+            _logs.Write($"Update available: {result.Manifest?.Version} (current {result.CurrentVersion})");
+        else
+            _logs.Write(result.Message ?? "No update available");
+        return result;
+    }
+
+    /// <summary>
+    /// Installs an update via msiexec. Prefer silent=true when called from the service
+    /// (already LocalSystem). Do not stop the service manually — the MSI ServiceControl
+    /// table should stop/restart DnsBlocker during the upgrade.
+    /// </summary>
+    public async Task<UpdateInstallResult> InstallUpdateAsync(
+        UpdateManifest? manifest = null,
+        bool silent = true,
+        CancellationToken cancellationToken = default)
+    {
+        if (manifest is null)
+        {
+            var check = await CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
+            if (!check.UpdateAvailable || check.Manifest is null)
+            {
+                return new UpdateInstallResult
+                {
+                    Started = false,
+                    Success = false,
+                    Error = check.Message ?? "No update available to install."
+                };
+            }
+
+            manifest = check.Manifest;
+        }
+
+        _logs.Write($"Starting MSI update {manifest.Version} (silent={silent})");
+        var result = await _updateInstaller.InstallAsync(manifest, silent, cancellationToken).ConfigureAwait(false);
+        if (result.Started)
+            _logs.Write($"msiexec started for {manifest.Version} — service may stop via MSI ServiceControl");
+        else
+            _logs.Write($"Update install failed: {result.Error}");
+        return result;
+    }
+
+    /// <summary>
+    /// Daily update path: check feed when configured; auto-install only if AutoInstallUpdates.
+    /// </summary>
+    public async Task RunScheduledUpdateCheckAsync(CancellationToken cancellationToken = default)
+    {
+        var cfg = GetConfig();
+        if (string.IsNullOrWhiteSpace(cfg.UpdateFeedUrl))
+            return;
+
+        try
+        {
+            var check = await CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
+            if (check.UpdateAvailable && cfg.AutoInstallUpdates && check.Manifest is not null)
+            {
+                _logs.Write("AutoInstallUpdates: launching silent msiexec");
+                await InstallUpdateAsync(check.Manifest, silent: true, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logs.Write($"Scheduled update check failed: {ex.Message}");
+        }
+    }
+
     private static void Normalize(AppConfig config)
     {
         config.ChunkSize = Math.Clamp(config.ChunkSize, 1, 5000);
@@ -144,6 +234,7 @@ public sealed class HubRuntime
             .Select(t => t.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        config.UpdateFeedUrl = (config.UpdateFeedUrl ?? "").Trim();
     }
 
     private static AppConfig Clone(AppConfig c) => new()
@@ -160,6 +251,9 @@ public sealed class HubRuntime
         ScheduledHour = c.ScheduledHour,
         ScheduledMinute = c.ScheduledMinute,
         EnableStatsCollection = c.EnableStatsCollection,
-        PolicyNamePrefix = c.PolicyNamePrefix
+        PolicyNamePrefix = c.PolicyNamePrefix,
+        UpdateFeedUrl = c.UpdateFeedUrl,
+        CheckUpdatesOnStartup = c.CheckUpdatesOnStartup,
+        AutoInstallUpdates = c.AutoInstallUpdates
     };
 }

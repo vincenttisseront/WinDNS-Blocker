@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
+using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.UI;
 
@@ -9,11 +10,13 @@ public partial class MainWindow : Window
 {
     private readonly IpcClient _client = new();
     private AppConfig? _config;
+    private bool _startupUpdateCheckDone;
 
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += async (_, _) => await RefreshAsync();
+        VersionLabel.Text = "v" + AppVersion.Current;
+        Loaded += async (_, _) => await RefreshAsync(checkUpdatesOnStartup: true);
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
@@ -50,6 +53,9 @@ public partial class MainWindow : Window
         IsEnabled = !busy;
     }
 
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e) =>
+        await CheckUpdatesAsync(promptIfAvailable: true, quietIfCurrent: false);
+
     private async void SaveConfig_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -68,6 +74,9 @@ public partial class MainWindow : Window
             if (int.TryParse(MinuteBox.Text, out var minute))
                 cfg.ScheduledMinute = minute;
             cfg.EnableStatsCollection = StatsCheck.IsChecked == true;
+            cfg.UpdateFeedUrl = UpdateFeedUrlBox.Text.Trim();
+            cfg.CheckUpdatesOnStartup = CheckUpdatesOnStartupBox.IsChecked == true;
+            cfg.AutoInstallUpdates = AutoInstallUpdatesBox.IsChecked == true;
             cfg.DnsTargets = TargetsBox.Text
                 .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(t => !string.IsNullOrWhiteSpace(t))
@@ -114,10 +123,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(bool checkUpdatesOnStartup = false)
     {
         try
         {
+            try
+            {
+                var ver = await _client.GetAppVersionAsync();
+                VersionLabel.Text = "v" + ver.Version;
+            }
+            catch
+            {
+                VersionLabel.Text = "v" + AppVersion.Current;
+            }
+
             _config = await _client.GetConfigAsync();
             BindConfig(_config);
             var status = await _client.GetStatusAsync();
@@ -133,11 +152,87 @@ public partial class MainWindow : Window
             LogsBox.Text = string.Join(Environment.NewLine, status.RecentLogs);
             var domains = await _client.SearchDomainsAsync(DomainSearchBox.Text, 100);
             DomainsList.ItemsSource = domains;
+
+            if (checkUpdatesOnStartup && !_startupUpdateCheckDone && _config.CheckUpdatesOnStartup
+                && !string.IsNullOrWhiteSpace(_config.UpdateFeedUrl))
+            {
+                _startupUpdateCheckDone = true;
+                await CheckUpdatesAsync(promptIfAvailable: true, quietIfCurrent: true);
+            }
         }
         catch (Exception ex)
         {
             StatusSummary.Text = "Service injoignable";
             StatusDetails.Text = ex.Message + "\n\nDémarrez le service DnsBlocker (install.ps1) puis réessayez.";
+            UpdateStatusLine.Text = "Mise à jour : service injoignable";
+        }
+    }
+
+    private async Task CheckUpdatesAsync(bool promptIfAvailable, bool quietIfCurrent)
+    {
+        try
+        {
+            UpdateStatusLine.Text = "Mise à jour : vérification…";
+            var result = await _client.CheckForUpdatesAsync();
+            if (result.UpdateAvailable && result.Manifest is not null)
+            {
+                UpdateStatusLine.Text =
+                    $"Mise à jour disponible : {result.Manifest.Version} (actuelle {result.CurrentVersion})";
+                if (!promptIfAvailable)
+                    return;
+
+                var notes = string.IsNullOrWhiteSpace(result.Manifest.ReleaseNotes)
+                    ? ""
+                    : "\n\n" + result.Manifest.ReleaseNotes;
+                var choice = MessageBox.Show(
+                    $"Une nouvelle version ({result.Manifest.Version}) est disponible.{notes}\n\nInstaller maintenant ?",
+                    "Mise à jour WinDNS Blocker",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information);
+                if (choice == MessageBoxResult.Yes)
+                {
+                    UpdateStatusLine.Text = "Mise à jour : installation en cours…";
+                    var install = await _client.InstallUpdateAsync(result.Manifest, silent: true);
+                    if (install.Started)
+                    {
+                        UpdateStatusLine.Text = "Mise à jour : msiexec démarré (le service peut redémarrer)";
+                        MessageBox.Show(
+                            "Installation démarrée. Le service peut s'arrêter brièvement pendant la mise à niveau MSI.",
+                            "WinDNS Blocker",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        UpdateStatusLine.Text = "Mise à jour : échec — " + (install.Error ?? "erreur inconnue");
+                        MessageBox.Show(install.Error ?? "Échec de l'installation.", "Erreur mise à jour",
+                            MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+                else
+                {
+                    UpdateStatusLine.Text =
+                        $"Mise à jour disponible : {result.Manifest.Version} (plus tard)";
+                }
+            }
+            else
+            {
+                UpdateStatusLine.Text = result.Message ?? $"À jour ({result.CurrentVersion})";
+                if (!quietIfCurrent)
+                {
+                    MessageBox.Show(
+                        result.Message ?? "Aucune mise à jour disponible.",
+                        "WinDNS Blocker",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusLine.Text = "Mise à jour : " + ex.Message;
+            if (!quietIfCurrent)
+                MessageBox.Show(ex.Message, "Erreur mise à jour", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -151,6 +246,9 @@ public partial class MainWindow : Window
         HourBox.Text = cfg.ScheduledHour.ToString();
         MinuteBox.Text = cfg.ScheduledMinute.ToString();
         StatsCheck.IsChecked = cfg.EnableStatsCollection;
+        UpdateFeedUrlBox.Text = cfg.UpdateFeedUrl ?? "";
+        CheckUpdatesOnStartupBox.IsChecked = cfg.CheckUpdatesOnStartup;
+        AutoInstallUpdatesBox.IsChecked = cfg.AutoInstallUpdates;
         TargetsBox.Text = string.Join(Environment.NewLine, cfg.DnsTargets);
         ActionBox.SelectedIndex = cfg.PolicyAction.Equals("IGNORE", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
     }

@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WinDNS Blocker MSI (WiX Toolset 5).
+
+  Expects bind paths:
+    ServicePublish -> ../publish/service/  (DnsBlocker.Service.exe + deps)
+    UiPublish      -> ../publish/ui/       (DnsBlocker.UI.exe + deps)
+
+  Product Version comes from MSBuild $(Version) via DefineConstants, default 1.0.0.
+  UpgradeCode is stable across releases — do not change it.
+
+  Note: WiX only fully supports Windows. Compiling this package on Linux is undefined.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="WinDNS Blocker"
+    Manufacturer="WinDNS Blocker"
+    Version="$(Version)"
+    UpgradeCode="8F3A2C1D-9B4E-4F6A-A7C8-1D2E3F4A5B6C"
+    Scope="perMachine"
+    Language="1033">
+
+    <!--
+      afterInstallInitialize: remove previous product early so the service is stopped
+      and old files are cleared before new files are installed (safe in-place upgrade).
+    -->
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of [ProductName] is already installed. Please uninstall it first."
+      AllowSameVersionUpgrades="yes"
+      Schedule="afterInstallInitialize" />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Feature Id="ProductFeature" Title="WinDNS Blocker" Description="Hub service and WPF UI" Level="1">
+      <ComponentGroupRef Id="ServiceComponents" />
+      <ComponentGroupRef Id="UiComponents" />
+      <ComponentRef Id="LogsFolderComponent" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DnsBlocker">
+        <Directory Id="UiFolder" Name="UI" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="AppDataRoot" Name="DnsBlocker">
+        <Directory Id="LogsFolder" Name="logs" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="WinDNS Blocker" />
+    </StandardDirectory>
+  </Package>
+
+  <!-- Service binaries under Program Files\DnsBlocker -->
+  <Fragment>
+    <ComponentGroup Id="ServiceComponents" Directory="INSTALLFOLDER">
+      <Component Id="ServiceExecutable" Guid="B4E7C1A2-3D5F-4A8B-9C0D-1E2F3A4B5C6D">
+        <File Id="ServiceExe" Source="!(bindpath.ServicePublish)DnsBlocker.Service.exe" KeyPath="yes" />
+        <ServiceInstall
+          Id="DnsBlockerServiceInstall"
+          Name="DnsBlocker"
+          DisplayName="WinDNS Blocker Hub"
+          Description="Synchronizes Steve Jenkins-style DNS blocklists into Windows DNS Query Resolution Policies across a farm of DNS servers."
+          Start="auto"
+          Type="ownProcess"
+          ErrorControl="normal"
+          Vital="yes" />
+        <ServiceControl
+          Id="DnsBlockerServiceControl"
+          Name="DnsBlocker"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+      <!-- Harvest remaining publish output (deps, dlls, json); exclude service exe (handled above). -->
+      <Files Include="!(bindpath.ServicePublish)**">
+        <Exclude Files="!(bindpath.ServicePublish)DnsBlocker.Service.exe" />
+        <Exclude Files="!(bindpath.ServicePublish)**.pdb" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- UI under Program Files\DnsBlocker\UI -->
+  <Fragment>
+    <ComponentGroup Id="UiComponents" Directory="UiFolder">
+      <Files Include="!(bindpath.UiPublish)**">
+        <Exclude Files="!(bindpath.UiPublish)**.pdb" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- ProgramData\DnsBlocker\logs -->
+  <Fragment>
+    <Component Id="LogsFolderComponent" Directory="LogsFolder" Guid="C5F8D2B3-4E6A-5B9C-0D1E-2F3A4B5C6D7E">
+      <CreateFolder />
+      <RegistryValue
+        Root="HKLM"
+        Key="Software\DnsBlocker"
+        Name="LogsFolder"
+        Type="integer"
+        Value="1"
+        KeyPath="yes" />
+    </Component>
+  </Fragment>
+
+  <!-- Start Menu shortcut for the UI -->
+  <Fragment>
+    <Component Id="ApplicationShortcut" Directory="ApplicationProgramsFolder" Guid="D6A9E3C4-5F7B-6C0D-1E2F-3A4B5C6D7E8F">
+      <Shortcut
+        Id="UiStartMenuShortcut"
+        Name="WinDNS Blocker"
+        Description="WinDNS Blocker Hub UI"
+        Target="[UiFolder]DnsBlocker.UI.exe"
+        WorkingDirectory="UiFolder" />
+      <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+      <RegistryValue
+        Root="HKLM"
+        Key="Software\DnsBlocker"
+        Name="StartMenuShortcut"
+        Type="integer"
+        Value="1"
+        KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>

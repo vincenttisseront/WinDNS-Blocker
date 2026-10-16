@@ -6,6 +6,7 @@ using DnsBlocker.Core.Paths;
 using DnsBlocker.Core.Stats;
 using DnsBlocker.Core.Storage;
 using DnsBlocker.Core.Sync;
+using DnsBlocker.Core.Updates;
 using DnsBlocker.Service;
 
 AppPaths.EnsureDirectories();
@@ -31,6 +32,8 @@ builder.Services.AddSingleton<IDnsPolicyProvider>(sp =>
 });
 builder.Services.AddSingleton<SyncEngine>();
 builder.Services.AddSingleton<DnsStatsCollector>();
+builder.Services.AddSingleton<IUpdateChecker, UpdateChecker>();
+builder.Services.AddSingleton<UpdateInstaller>();
 builder.Services.AddSingleton<HubRuntime>();
 builder.Services.AddHostedService<HubHostedService>();
 

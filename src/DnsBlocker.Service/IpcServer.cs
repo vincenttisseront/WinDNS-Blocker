@@ -123,6 +123,24 @@ public sealed class IpcServer
                     return IpcResponse.Success(request.Id, _runtime.GetStats(p.Hours));
                 }
 
+                case IpcProtocol.MethodGetAppVersion:
+                    return IpcResponse.Success(request.Id, new AppVersionResult { Version = _runtime.GetAppVersion() });
+
+                case IpcProtocol.MethodCheckForUpdates:
+                {
+                    var result = await _runtime.CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
+                    return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodInstallUpdate:
+                {
+                    var p = request.Params?.Deserialize<InstallUpdateParams>(IpcProtocol.JsonOptions)
+                            ?? new InstallUpdateParams();
+                    var result = await _runtime.InstallUpdateAsync(p.Manifest, p.Silent, cancellationToken)
+                        .ConfigureAwait(false);
+                    return IpcResponse.Success(request.Id, result);
+                }
+
                 default:
                     return IpcResponse.Failure(request.Id, $"Unknown method '{request.Method}'");
             }

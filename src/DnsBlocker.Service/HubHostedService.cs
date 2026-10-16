@@ -10,6 +10,7 @@ public sealed class HubHostedService : BackgroundService
     private readonly FileLogBuffer _logs;
     private readonly ILogger<HubHostedService> _logger;
     private DateTimeOffset? _nextScheduledUtc;
+    private DateTimeOffset _nextUpdateCheckUtc;
 
     public HubHostedService(HubRuntime runtime, FileLogBuffer logs, ILogger<HubHostedService> logger)
     {
@@ -23,6 +24,8 @@ public sealed class HubHostedService : BackgroundService
         _logs.Write("DnsBlocker hub service starting");
         _runtime.ApplyStatsSetting();
         _nextScheduledUtc = _runtime.ComputeNextScheduledUtc(DateTimeOffset.Now);
+        // Stagger first update check shortly after start, then daily.
+        _nextUpdateCheckUtc = DateTimeOffset.UtcNow.AddMinutes(2);
 
         var ipc = new IpcServer(_runtime, () => _nextScheduledUtc, _logger);
         var ipcTask = ipc.RunAsync(stoppingToken);
@@ -46,6 +49,21 @@ public sealed class HubHostedService : BackgroundService
                     }
 
                     _nextScheduledUtc = _runtime.ComputeNextScheduledUtc(DateTimeOffset.Now);
+                }
+
+                if (nowUtc >= _nextUpdateCheckUtc)
+                {
+                    try
+                    {
+                        await _runtime.RunScheduledUpdateCheckAsync(stoppingToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Scheduled update check failed");
+                        _logs.Write($"Scheduled update check failed: {ex.Message}");
+                    }
+
+                    _nextUpdateCheckUtc = DateTimeOffset.UtcNow.AddDays(1);
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken).ConfigureAwait(false);

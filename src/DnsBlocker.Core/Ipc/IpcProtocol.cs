@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DnsBlocker.Core.Models;
+using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.Core.Ipc;
 
@@ -19,6 +20,9 @@ public static class IpcProtocol
     public const string MethodApplyNow = "ApplyNow";
     public const string MethodSearchDomains = "SearchDomains";
     public const string MethodGetStats = "GetStats";
+    public const string MethodGetAppVersion = "GetAppVersion";
+    public const string MethodCheckForUpdates = "CheckForUpdates";
+    public const string MethodInstallUpdate = "InstallUpdate";
 }
 
 public sealed class IpcRequest
@@ -60,4 +64,18 @@ public sealed class GetStatsParams
 public sealed class SetConfigParams
 {
     public AppConfig? Config { get; set; }
+}
+
+public sealed class InstallUpdateParams
+{
+    /// <summary>When true (default for service), msiexec /qn. When false, /qb.</summary>
+    public bool Silent { get; set; } = true;
+
+    /// <summary>Optional manifest from a prior CheckForUpdates; otherwise the feed is re-fetched.</summary>
+    public UpdateManifest? Manifest { get; set; }
+}
+
+public sealed class AppVersionResult
+{
+    public string Version { get; set; } = "";
 }

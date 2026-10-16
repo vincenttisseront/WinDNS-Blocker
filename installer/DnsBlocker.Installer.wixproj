@@ -1,0 +1,22 @@
+<!-- Pin exact SDK version: NuGetSdkResolver rejects floating versions like 5.*. -->
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Version Condition="'$(Version)' == ''">1.0.0</Version>
+    <!-- Expose MSBuild Version to WiX preprocessor ($(Version) in Package.wxs). -->
+    <DefineConstants>Version=$(Version)</DefineConstants>
+    <ServicePublishDir Condition="'$(ServicePublishDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\publish\service'))\</ServicePublishDir>
+    <UiPublishDir Condition="'$(UiPublishDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\publish\ui'))\</UiPublishDir>
+    <OutputName>DnsBlocker-$(Version)</OutputName>
+    <OutputPath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\artifacts'))\</OutputPath>
+    <IntermediateOutputPath>$(MSBuildThisFileDirectory)obj\$(Configuration)\</IntermediateOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <BindPath Include="$(ServicePublishDir)" BindName="ServicePublish" />
+    <BindPath Include="$(UiPublishDir)" BindName="UiPublish" />
+  </ItemGroup>
+
+</Project>
