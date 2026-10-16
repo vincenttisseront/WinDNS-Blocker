@@ -84,4 +84,20 @@ public class WinRmEmptyResponseTests
         Assert.Contains(result.Log, l => l.Contains("exitCode=1", StringComparison.Ordinal));
         Assert.Contains("ParserError", result.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void MapWinRmResult_BitwiseOrStyleError_GetsActionableHint()
+    {
+        var run = new PowerShellRunResult
+        {
+            ExitCode = 2,
+            Stdout =
+                """{"ok":false,"message":"Method invocation failed because [System.Object[]] does not contain a method named 'op_BitwiseOr'. | FQID=MethodNotFound","log":["WinRM OK","Identite a autoriser: ar-systems.fr\\WINDC04$"]}""",
+            Stderr = ""
+        };
+
+        var result = PowerShellTargetPrepRunner.MapWinRmResult(run);
+        Assert.False(result.Ok);
+        Assert.Contains("op_BitwiseOr", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }
