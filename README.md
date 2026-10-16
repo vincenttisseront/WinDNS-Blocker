@@ -39,6 +39,10 @@ OISD uses the **domainswild** endpoints (`*.apex`) so Windows DNS QRP `EQ,*.doma
 - WinRM reachability + DNS admin rights on each target
 - If DNS policies already replicate via AD, you may list a single target; otherwise list every DNS you want updated
 
+### Sync QRP idempotent (WIN32 9971)
+
+`Mettre à jour` replaces all `DnsBlocker_*` policies in **one** PowerShell session (remove-all, then recreate chunks). If a stale policy remains (**WIN32 9971** / “already exists”), the push removes that name and retries Add — partial prior syncs no longer fail the farm.
+
 ### Préparer une cible DNS (WIN32 1011)
 
 QRP policies need **Full Control** on `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server` on the target. DnsAdmins alone often yields **WIN32 1011**.
