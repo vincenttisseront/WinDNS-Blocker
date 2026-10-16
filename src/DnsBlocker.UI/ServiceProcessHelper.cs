@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.ServiceProcess;
+using DnsBlocker.UI.Localization;
 
 namespace DnsBlocker.UI;
 
@@ -26,7 +27,7 @@ internal static class ServiceProcessHelper
         }
         catch (InvalidOperationException ex)
         {
-            return new ServiceProbeResult(false, false, "Service introuvable: " + ex.Message);
+            return new ServiceProbeResult(false, false, Loc.F("Svc.NotFound", ex.Message));
         }
         catch (Exception ex)
         {
@@ -40,7 +41,7 @@ internal static class ServiceProcessHelper
     public static string? TryStart(TimeSpan timeout)
     {
         if (!OperatingSystem.IsWindows())
-            return "Démarrage du service uniquement sous Windows.";
+            return Loc.T("Svc.StartWindowsOnly");
 
         try
         {
@@ -54,13 +55,12 @@ internal static class ServiceProcessHelper
         }
         catch (InvalidOperationException)
         {
-            // Fall back to elevated sc.exe — ServiceController.Start may need admin.
             return TryStartElevated(timeout);
         }
         catch (Exception ex)
         {
             var elevated = TryStartElevated(timeout);
-            return elevated ?? ("Échec démarrage service: " + ex.Message);
+            return elevated ?? Loc.F("Svc.StartFail", ex.Message);
         }
     }
 
@@ -79,18 +79,17 @@ internal static class ServiceProcessHelper
             };
             using var p = Process.Start(psi);
             if (p is null)
-                return "Impossible de lancer sc.exe (UAC annulé ?).";
+                return Loc.T("Svc.ScLaunchFail");
             p.WaitForExit((int)timeout.TotalMilliseconds);
 
-            // Re-probe
             var probe = Probe();
             if (probe.Running)
                 return null;
-            return $"Service non démarré (sc exit {p.ExitCode}). {probe.Detail}";
+            return Loc.F("Svc.NotStarted", p.ExitCode, probe.Detail);
         }
         catch (Exception ex)
         {
-            return "Élévation / sc start échoué: " + ex.Message;
+            return Loc.F("Svc.ElevateFail", ex.Message);
         }
     }
 }

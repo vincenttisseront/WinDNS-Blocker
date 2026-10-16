@@ -179,8 +179,8 @@
         IconIndex="0" />
       <Shortcut
         Id="SetupStartMenuShortcut"
-        Name="Assistant d'installation WinDNS Blocker"
-        Description="Diagnostic et réparation (sans PowerShell)"
+        Name="WinDNS Blocker Setup assistant"
+        Description="Diagnose and repair (no PowerShell required)"
         Target="[UiFolder]DnsBlocker.UI.exe"
         Arguments="/setup"
         WorkingDirectory="UiFolder"

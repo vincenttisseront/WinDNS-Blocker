@@ -1,6 +1,8 @@
 # WinDNS Blocker
 
-Hub Windows (.NET 8) that downloads [Steve Jenkins pi-hole-lists](https://github.com/stevejenkins/pi-hole-lists) (list-of-lists), expands them into domains, and pushes **DNS Query Resolution Policies** to **N Windows DNS servers** from a **single service**.
+Windows hub (.NET 8) that downloads [Steve Jenkins pi-hole-lists](https://github.com/stevejenkins/pi-hole-lists) (list-of-lists), expands them into domains, and pushes **DNS Query Resolution Policies** to **N Windows DNS servers** from a **single service**.
+
+> **FR :** l’interface propose Français / English (Configuration → Language). La doc publique ci-dessous est en anglais.
 
 ## Architecture
 
@@ -15,6 +17,13 @@ Hub (service + UI)
 
 `blocklists.txt` / `whitelists.txt` are **URLs to list indexes**, not raw domains. `regex.txt` is **not** applied (Windows QRP has no regex).
 
+### Language (UI)
+
+- **Configuration → Language**: Auto / English / Français
+- **Auto** (default): follows the Windows UI culture — French if `fr*`, otherwise English
+- Preference is stored in `%ProgramData%\DnsBlocker\config.json` as `uiLanguage` (`auto` | `en` | `fr`)
+- Changing language takes effect after restarting the UI
+
 ### Curated extra blocklists
 
 In addition to Steve Jenkins LoL, the hub can ingest **curated ExtraBlocklistUrls** (toggles in **Configuration**). Defaults on first run:
@@ -26,9 +35,9 @@ In addition to Steve Jenkins LoL, the hub can ingest **curated ExtraBlocklistUrl
 | OISD NSFW (family) | on | `https://nsfw.oisd.nl/domainswild` |
 | Chadmayfield porn (adult) | **off** | `https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list` |
 
-OISD uses the **domainswild** endpoints (`*.apex`) so Windows DNS QRP `EQ,*.domain` covers subdomains — not the ABP root URLs (`https://big.oisd.nl/`) Vincent may have seen truncated.
+OISD uses the **domainswild** endpoints (`*.apex`) so Windows DNS QRP `EQ,*.domain` covers subdomains — not the ABP root URLs (`https://big.oisd.nl/`).
 
-**Auto-refresh:** the service re-downloads Steve Jenkins indexes + every enabled curated/custom URL on the **daily scheduled sync** (`ScheduledHour` / `ScheduledMinute`, default **02:00 local**) and whenever you click **Mettre à jour maintenant**.
+**Auto-refresh:** the service re-downloads Steve Jenkins indexes + every enabled curated/custom URL on the **daily scheduled sync** (`ScheduledHour` / `ScheduledMinute`, default **02:00 local**) and whenever you click **Update now**.
 
 **YouTube ads caveat:** DNS-only blocking is **partial**. This list helps on phones that use your DNS, but it will not kill all mobile YouTube ads (app-bundled / same-domain delivery). Pair with client-side blockers when needed.
 
@@ -39,14 +48,14 @@ OISD uses the **domainswild** endpoints (`*.apex`) so Windows DNS QRP `EQ,*.doma
 - WinRM reachability + DNS admin rights on each target
 - If DNS policies already replicate via AD, you may list a single target; otherwise list every DNS you want updated
 
-### Préparer une cible DNS (WIN32 1011)
+### Prepare a DNS target (WIN32 1011)
 
 QRP policies need **Full Control** on `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server` on the target. DnsAdmins alone often yields **WIN32 1011**.
 
-**From the app:** Configuration → **Préparer une cible (WinRM)…**
+**From the app:** Configuration → **Prepare a target (WinRM)…**
 
 1. Hostname (prefill from farm / machine domain)
-2. Admin `DOMAINE\user` + password (DPAPI LocalMachine in `ProgramData\DnsBlocker\secrets` if saved — never logged)
+2. Admin `DOMAIN\user` + password (DPAPI LocalMachine in `ProgramData\DnsBlocker\secrets` if saved — never logged)
 3. Test WinRM / CIM
 4. Remote prep: registry ACL for hub service account (or DnsAdmins), optional DnsAdmins membership, probe Add/Remove QRP
 5. Target marked prepared; normal sync uses the hub service identity afterward
@@ -118,7 +127,7 @@ Default `UpdateFeedUrl` (also shown in the first-run wizard):
 
 `https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json`
 
-That stable “latest” asset URL always follows the newest GitHub release that publishes `version.json`. Clear the field to disable checks. The service checks about daily; if `AutoInstallUpdates` is true it runs silent `msiexec /i … /qn` as LocalSystem (MSI ServiceControl stops/restarts the hub — do not stop the service yourself). With auto-install off, the UI notifies only (`Vérifier les mises à jour` / startup check). IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
+That stable “latest” asset URL always follows the newest GitHub release that publishes `version.json`. Clear the field to disable checks. The service checks about daily; if `AutoInstallUpdates` is true it runs silent `msiexec /i … /qn` as LocalSystem (MSI ServiceControl stops/restarts the hub — do not stop the service yourself). With auto-install off, the UI notifies only (**Check for updates** / startup check). IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
 
 Publish both `DnsBlocker-<Version>.msi` and `version.json` as release assets on every tag so the latest feed stays valid.
 
@@ -139,20 +148,20 @@ Requires `wixl` (`apt install wixl`). This is self-contained win-x64 (service + 
 
 ```powershell
 # Elevated — after downloading the release MSI
-msiexec /i DnsBlocker-1.0.7.msi /l*v $env:TEMP\dnsblocker-install.log
+msiexec /i DnsBlocker-1.0.11.msi /l*v $env:TEMP\dnsblocker-install.log
 ```
 
 **After MSI install (no PowerShell needed):**
 
-1. **Assistant d'installation** opens (`DnsBlocker.UI.exe /setup`) — health check / repair (French UI).
-2. **Ouvrir la configuration** launches the first-run wizard (`/firstrun`) which writes `%ProgramData%\DnsBlocker\setup-complete.flag` + `setupWizardCompleted` when done.
-3. Start Menu also has **Assistant d'installation WinDNS Blocker**; the main UI has **Assistant…** and **Réparer l'installation** (launches `Repair-DnsBlocker.cmd` under InstallRoot).
+1. **Setup assistant** opens (`DnsBlocker.UI.exe /setup`) — health check / repair.
+2. **Open configuration** launches the first-run wizard (`/firstrun`) which writes `%ProgramData%\DnsBlocker\setup-complete.flag` + `setupWizardCompleted` when done.
+3. Start Menu also has **WinDNS Blocker Setup assistant**; the main UI has **Wizard…** and repair flows (launches `Repair-DnsBlocker.cmd` under InstallRoot).
 
 **Broken/sparse install** (GUI preferred; CLI fallback):
 
-- Double-click `C:\Program Files\DnsBlocker\Repair-DnsBlocker.cmd` (or **Réparer** in the wizard), or:
+- Double-click `C:\Program Files\DnsBlocker\Repair-DnsBlocker.cmd` (or **Repair** in the wizard), or:
 ```powershell
-irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/feat/installer-gui-setup/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1
+irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/main/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1
 powershell -ExecutionPolicy Bypass -File $env:TEMP\Repair-DnsBlocker.ps1
 ```
 
@@ -166,7 +175,7 @@ Server requirement: **Windows Server with Desktop Experience** (WPF UI). Server 
 .\scripts\doctor.ps1 -StartServiceIfStopped
 ```
 
-Then open `C:\Program Files\DnsBlocker\UI\DnsBlocker.UI.exe` (or the Start Menu shortcut), set DNS targets (one FQDN per line), save, and click **Mettre à jour maintenant**.
+Then open `C:\Program Files\DnsBlocker\UI\DnsBlocker.UI.exe` (or the Start Menu shortcut), set DNS targets (one FQDN per line), save, and click **Update now**.
 
 Config/state:
 
@@ -183,14 +192,14 @@ Set `DNSBLOCKER_USE_MOCK=1` to force the in-memory DNS provider (also automatic 
 1. **No regex** — Steve Jenkins `regex.txt` cannot be imported into QRP.
 2. **Policy size** — domains are chunked (~1000 FQDN/policy by default). Very large lists may still hit DNS API limits; consider reducing sources or raising operational monitoring.
 3. **Stats** — Phase C uses hub-local DNS analytical ETW (`Microsoft-Windows-DNSServer`) when enabled; without Analytical logging the Stats tab shows an empty/actionable message. Top called/blocked domains come from SQLite `query_events` (ETW or synthetic), not a remote per-DC analytics API. “Blocked” means the query name is on the hub blocklist, not a confirmed QRP DENY on the wire.
-4. **YouTube / CDN ads** — many mobile ad requests share the same hostnames as video delivery; pure DNS blocklists often cannot remove YouTube ads. Use **Statut → Vérifier les politiques QRP** and **Stats** tops to confirm the hub is applying `DnsBlocker_*` policies and seeing queries — not to expect zero ads on phone YouTube.
+4. **YouTube / CDN ads** — many mobile ad requests share the same hostnames as video delivery; pure DNS blocklists often cannot remove YouTube ads. Use **Status → Verify QRP policies** and **Stats** tops to confirm the hub is applying `DnsBlocker_*` policies and seeing queries — not to expect zero ads on phone YouTube.
 5. **Sync ≠ applied** — a successful push records chunk counts in SQLite; live presence/enabled state is verified separately via `Get-DnsServerQueryResolutionPolicy` (IPC `GetTargetPolicyStatus`).
 
 ### Verify on a phone (point DNS at the farm)
 
-1. Configure the hub target (e.g. `windc05.ar-systems.fr`) and run **Mettre à jour maintenant**.
-2. On **Statut**, click **Vérifier les politiques QRP** — expect `DnsBlocker_*` installées = activées and matching the last sync count.
-3. On the phone, set DNS to that same Windows DNS (or a resolver that forwards to it), browse, then **Stats → Charger** (enable ETW collection on the hub first). Top domaines appelés/bloqués should move if the phone really uses that DNS.
+1. Configure the hub target (e.g. `windc05.ar-systems.fr`) and run **Update now**.
+2. On **Status**, click **Verify QRP policies** — expect `DnsBlocker_*` installed = enabled and matching the last sync count.
+3. On the phone, set DNS to that same Windows DNS (or a resolver that forwards to it), browse, then **Stats → Load** (enable ETW collection on the hub first). Top called/blocked domains should move if the phone really uses that DNS.
 
 ## Uninstall
 
