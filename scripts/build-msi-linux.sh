@@ -40,7 +40,9 @@ dotnet publish "$ROOT/src/DnsBlocker.UI/DnsBlocker.UI.csproj" \
 
 echo "==> Embedding Start Menu / exe icon (Linux cross-publish does not apply ApplicationIcon)"
 chmod +x "$ROOT/scripts/embed-win-icon.sh"
-"$ROOT/scripts/embed-win-icon.sh" "$UI_OUT/DnsBlocker.UI.exe" "$ICON_SRC"
+if ! "$ROOT/scripts/embed-win-icon.sh" "$UI_OUT/DnsBlocker.UI.exe" "$ICON_SRC"; then
+  echo "WARNING: icon embed skipped (install wine for PE icon embedding). MSI ProductIcon.ico still used for Start Menu/ARP." >&2
+fi
 # Ship the .ico beside the UI so shortcuts/tools can resolve a real file path if needed.
 cp -a "$ICON_SRC" "$UI_OUT/DnsBlocker.ico"
 
@@ -234,7 +236,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Fix Start Menu icon: embed ICO into UI exe (Linux publish) + ProductIcon.ico shortcut/ARP binding.",
+  "releaseNotes": "WinDNS Blocker release build (self-contained win-x64).",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
