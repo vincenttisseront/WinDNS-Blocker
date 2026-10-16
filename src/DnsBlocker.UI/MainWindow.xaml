@@ -28,6 +28,7 @@
                        IsIndeterminate="True" Visibility="Collapsed" VerticalAlignment="Center"/>
           <TextBlock x:Name="BusyLabel" Text="" Margin="0,0,12,0" VerticalAlignment="Center"
                      Foreground="{StaticResource MutedBrush}" Visibility="Collapsed"/>
+          <Button x:Name="WizardButton" Content="Assistant…" Click="Wizard_Click" Margin="0,0,8,0"/>
           <Button x:Name="RefreshButton" Content="Actualiser" Click="Refresh_Click"/>
           <Button x:Name="CheckUpdatesButton" Content="Vérifier les mises à jour" Click="CheckUpdates_Click"/>
           <Button x:Name="ApplyNowButton" Content="Mettre à jour maintenant" Click="ApplyNow_Click" FontWeight="SemiBold"/>
