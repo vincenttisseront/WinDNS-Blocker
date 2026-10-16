@@ -385,6 +385,34 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void VerifyPolicies_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await RunBusyAsync("Sonde QRP…", async () =>
+            {
+                _journal.Write("Vérification des politiques QRP démarrée");
+                var probe = await _client.GetTargetPolicyStatusAsync().ConfigureAwait(true);
+                BindPolicyProbe(probe);
+                foreach (var t in probe.Targets)
+                {
+                    _journal.Write(t.ProbeOk
+                        ? $"{t.Target}: {t.LivePolicyCount} installée(s), {t.LiveEnabledCount} activée(s) → {t.AppliedLabel}"
+                        : $"{t.Target}: sonde en échec — {t.ProbeError}");
+                }
+
+                _journal.Write($"Vérification terminée ({probe.CheckedAt:u})");
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _journal.Write("Vérification QRP erreur : " + ex.Message);
+            PolicyProbeSummary.Text = "Sonde en échec : " + ex.Message;
+            MessageBox.Show(ex.Message, "Erreur sonde QRP", MessageBoxButton.OK, MessageBoxImage.Error);
+            RefreshLogsView();
+        }
+    }
+
     private async void LoadStats_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -393,15 +421,17 @@ public partial class MainWindow : Window
             {
                 if (!int.TryParse(StatsHoursBox.Text, out var hours))
                     hours = 24;
-                _journal.Write($"Action : Charger stats ({hours} h)");
-                var stats = await _client.GetStatsAsync(hours).ConfigureAwait(true);
-                StatsSummary.Text =
-                    $"Requêtes : {stats.TotalQueries} — Bloquées : {stats.BlockedQueries} (UTC {stats.FromUtc:g} → {stats.ToUtc:g})";
-                StatsMessage.Text = stats.Message ?? "";
-                TopBlockedGrid.ItemsSource = stats.TopBlockedDomains;
-                TopClientsGrid.ItemsSource = stats.TopClients;
+                var topN = 20;
+                if (StatsTopNBox.SelectedItem is ComboBoxItem item
+                    && int.TryParse(item.Content?.ToString(), out var parsedTop))
+                    topN = parsedTop;
+
+                _journal.Write($"Stats : chargement (dernières {hours}h, top {topN})");
+                var stats = await _client.GetStatsAsync(hours, topN).ConfigureAwait(true);
+                BindStats(stats);
                 _journal.Write(
-                    $"Stats OK — total {stats.TotalQueries}, bloquées {stats.BlockedQueries}");
+                    $"Stats : {stats.TotalQueries} requêtes, {stats.BlockedQueries} bloquées" +
+                    (string.IsNullOrWhiteSpace(stats.Message) ? "" : " — " + stats.Message));
             }).ConfigureAwait(true);
         }
         catch (Exception ex)
@@ -409,10 +439,6 @@ public partial class MainWindow : Window
             _journal.Write("Stats — erreur : " + ex.Message);
             MessageBox.Show(ex.Message, "Erreur stats", MessageBoxButton.OK, MessageBoxImage.Error);
             RefreshLogsView();
-        }
-        finally
-        {
-            SetBusy(false);
         }
     }
 
@@ -466,8 +492,6 @@ public partial class MainWindow : Window
         var probe = ServiceProcessHelper.Probe();
         try
         {
-            SetBusy(true, "Actualisation…");
-            _journal.Write("Actualisation du statut");
             try
             {
                 var ver = await _client.GetAppVersionAsync().ConfigureAwait(true);
@@ -493,6 +517,7 @@ public partial class MainWindow : Window
                 $"Dernière sync : {(last is null ? "aucune" : $"{last.StartedAt:u} — domaines {last.DomainCount}, sources {last.SourceListCount}")}\n" +
                 $"Stats : {(status.StatsEnabled ? "actives" : "inactives")} — {status.StatsMessage}";
             TargetsGrid.ItemsSource = last?.Targets ?? new List<TargetSyncResult>();
+            BindPolicyProbe(status.LastPolicyProbe);
             _lastServiceLogs = status.RecentLogs;
 
             // Keep the pre-filled machine domain; only auto-search if the box still has that (or user query).
@@ -667,7 +692,7 @@ public partial class MainWindow : Window
 
     private void RefreshLogsView()
     {
-        LogsBox.Text = _journal.Render(_lastServiceLogs);
+        RenderActionLogs(_lastServiceLogs);
         LogsBox.CaretIndex = LogsBox.Text.Length;
         LogsBox.ScrollToEnd();
     }
@@ -705,5 +730,9 @@ public partial class MainWindow : Window
         CheckUpdatesButton.IsEnabled = enabled;
         ApplyNowButton.IsEnabled = enabled;
         SearchDomainsButton.IsEnabled = enabled;
+        if (VerifyPoliciesButton is not null)
+            VerifyPoliciesButton.IsEnabled = enabled;
+        if (LoadStatsButton is not null)
+            LoadStatsButton.IsEnabled = enabled;
     }
 }
