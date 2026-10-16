@@ -10,7 +10,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         DispatcherUnhandledException += OnDispatcherUnhandledException;
-        AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         base.OnStartup(e);
     }
@@ -18,31 +18,16 @@ public partial class App : Application
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         LogCrash("DispatcherUnhandledException", e.Exception);
-        MessageBox.Show(
-            BuildUserMessage(e.Exception),
-            "WinDNS Blocker — erreur",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
         e.Handled = true;
+        ShowFatal("Erreur inattendue", e.Exception);
     }
 
-    private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
+    private static void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
     {
         if (e.ExceptionObject is Exception ex)
         {
             LogCrash("UnhandledException", ex);
-            try
-            {
-                MessageBox.Show(
-                    BuildUserMessage(ex),
-                    "WinDNS Blocker — erreur fatale",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-            }
-            catch
-            {
-                // UI may already be gone
-            }
+            ShowFatal("Erreur fatale", ex);
         }
     }
 
@@ -50,14 +35,28 @@ public partial class App : Application
     {
         LogCrash("UnobservedTaskException", e.Exception);
         e.SetObserved();
+        ShowFatal("Erreur asynchrone", e.Exception);
     }
 
-    private static string BuildUserMessage(Exception ex) =>
-        "L'interface s'est arrêtée avec une erreur.\n\n" +
-        ex.Message +
-        "\n\nVérifiez que le service Windows « DnsBlocker » est démarré, puis exécutez :\n" +
-        @"  powershell -ExecutionPolicy Bypass -File ""C:\Program Files\DnsBlocker\doctor.ps1""" +
-        "\n\nJournal : " + Path.Combine(AppPaths.LogDirectory, "ui-crash.log");
+    private static void ShowFatal(string title, Exception ex)
+    {
+        try
+        {
+            MessageBox.Show(
+                "WinDNS Blocker a rencontré une erreur mais reste ouvert.\n\n" +
+                title + ":\n" + ex.Message +
+                "\n\nSi le service DnsBlocker n'est pas démarré, utilisez le bouton « Démarrer le service ».\n" +
+                "Diagnostic : powershell -ExecutionPolicy Bypass -File \"C:\\Program Files\\DnsBlocker\\doctor.ps1\"\n" +
+                "Journal : " + Path.Combine(AppPaths.LogDirectory, "ui-crash.log"),
+                "WinDNS Blocker",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        catch
+        {
+            // last resort — never rethrow from the handler
+        }
+    }
 
     private static void LogCrash(string kind, Exception ex)
     {

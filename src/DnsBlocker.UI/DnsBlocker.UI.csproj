@@ -6,10 +6,15 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationIcon>Assets\DnsBlocker.ico</ApplicationIcon>
     <RootNamespace>DnsBlocker.UI</RootNamespace>
     <AssemblyName>DnsBlocker.UI</AssemblyName>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\DnsBlocker.Core\DnsBlocker.Core.csproj" />

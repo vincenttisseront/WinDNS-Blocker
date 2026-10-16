@@ -25,15 +25,7 @@ try
 {
     AppPaths.EnsureDirectories();
     AppPaths.TryHardenDataDirectoryAcl();
-}
-catch (Exception ex)
-{
-    WriteStartupFailure("Failed to create ProgramData directories", ex);
-    throw;
-}
 
-try
-{
     var builder = Host.CreateApplicationBuilder(args);
     builder.Environment.ContentRootPath = AppContext.BaseDirectory;
     builder.Services.AddWindowsService(options => options.ServiceName = "DnsBlocker");
@@ -78,6 +70,9 @@ static void WriteStartupFailure(string title, Exception ex)
         var path = Path.Combine(AppPaths.LogDirectory, "service-startup-failure.log");
         File.AppendAllText(path,
             $"{DateTimeOffset.Now:u} {title}{Environment.NewLine}{ex}{Environment.NewLine}{Environment.NewLine}");
+        // Also write service-crash.log for compatibility with Domaines UX messaging.
+        var crashLog = Path.Combine(AppPaths.LogDirectory, "service-crash.log");
+        File.AppendAllText(crashLog, $"{DateTimeOffset.Now:o} FATAL: {ex}\n");
     }
     catch
     {
