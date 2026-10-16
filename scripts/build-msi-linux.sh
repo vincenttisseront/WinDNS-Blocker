@@ -163,13 +163,17 @@ by_dir["ApplicationProgramsFolder"].append(f'''      <Component Id="{shortcut_ci
         <RegistryValue Root="HKLM" Key="Software\\DnsBlocker" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>''')
 
-# Post-install: launch Setup GUI (doctor/repair + firstrun handoff). Skip silent installs (UILevel<=2).
+# Post-install: launch Setup GUI. Do NOT use FileKey CAs with wixl — Windows returns
+# MSI 2753 ("file not marked for installation") even when the File row exists.
+# Property + Type 50/242 ExeCommand is reliable after InstallFinalize.
 launch_setup_xml = f'''
-    <CustomAction Id="LaunchSetupAssistant" FileKey="{ui_exe_fid}" ExeCommand="/setup" Return="asyncNoWait" Impersonate="yes" />
+    <!-- ui_exe_fid={ui_exe_fid} kept for layout gates; launch uses UIDIR property path -->
+    <CustomAction Id="SetSetupAssistantPath" Property="SETUPASSISTANTEXE" Value="[UIDIR]DnsBlocker.UI.exe" />
+    <CustomAction Id="LaunchSetupAssistant" Property="SETUPASSISTANTEXE" ExeCommand="/setup" Return="asyncNoWait" Impersonate="yes" />
     <InstallExecuteSequence>
+      <Custom Action="SetSetupAssistantPath" After="InstallFiles">NOT REMOVE="ALL"</Custom>
       <Custom Action="LaunchSetupAssistant" After="InstallFinalize">NOT REMOVE="ALL" AND UILevel &gt; 2</Custom>
     </InstallExecuteSequence>
-    <!-- Write firstrun.pending via a tiny Type 51 + deferred is hard in wixl; Setup.exe marks the flag itself. -->
 '''
 
 children: dict[Path, list[Path]] = defaultdict(list)
@@ -300,6 +304,28 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
   echo "OK: MSI contains $SVC_EXE"
   echo "OK: MSI contains $UI_EXE"
   echo "OK: MSI contains $HOSTFXR"
+
+  # Gate: LaunchSetupAssistant must NOT be a FileKey CA (type 18/210 → MSI 2753 on Server)
+  if command -v msiinfo >/dev/null 2>&1; then
+    CA_ROW=$(msiinfo export "$MSI" CustomAction 2>/dev/null | awk -F'\t' '$1=="LaunchSetupAssistant"{print}')
+    CA_TYPE=$(echo "$CA_ROW" | awk -F'\t' '{print $2}')
+    CA_SRC=$(echo "$CA_ROW" | awk -F'\t' '{print $3}')
+    if [[ -z "$CA_ROW" ]]; then
+      echo "FAIL: LaunchSetupAssistant CustomAction missing" >&2
+      exit 1
+    fi
+    # Type 210 = FileKey+async; forbidden. Type 242 = Property+async Exe — OK.
+    if [[ "$CA_TYPE" == "210" || "$CA_TYPE" == "18" ]]; then
+      echo "FAIL: LaunchSetupAssistant is FileKey type $CA_TYPE (causes MSI 2753). Use Property CA." >&2
+      echo "$CA_ROW" >&2
+      exit 1
+    fi
+    if [[ "$CA_SRC" == f* ]]; then
+      echo "FAIL: LaunchSetupAssistant Source looks like FileKey ($CA_SRC) — MSI 2753 risk" >&2
+      exit 1
+    fi
+    echo "OK: LaunchSetupAssistant CA type=$CA_TYPE Source=$CA_SRC (not FileKey)"
+  fi
 
   if [[ -n "$UI_EXE" ]] && command -v wrestool >/dev/null 2>&1; then
     wrestool -l "$UI_EXE" | grep -Eq 'group_icon|--type=14' \
