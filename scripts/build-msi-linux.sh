@@ -43,12 +43,22 @@ find "$STAGE/DnsBlocker/UI" -name '*.pdb' -delete
 # ensure logs placeholder
 : > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
 
-python3 - "$STAGE" "$WXS" "$VERSION" <<'PY'
+ICON_SRC="$ROOT/src/DnsBlocker.UI/Assets/DnsBlocker.ico"
+if [[ ! -f "$ICON_SRC" ]]; then
+  ICON_SRC="$ROOT/installer/Assets/DnsBlocker.ico"
+fi
+
+python3 - "$STAGE" "$WXS" "$VERSION" "$ICON_SRC" <<'PY'
 import sys, uuid, hashlib
 from collections import defaultdict
 from pathlib import Path
 
 stage, wxs_path, version = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+icon_src = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+if icon_src is None or not icon_src.is_file():
+    raise SystemExit(f"App icon not found: {icon_src}")
+icon_src = icon_src.resolve()
+
 UPGRADE_CODE = "8F3A2C1D-9B4E-4F6A-A7C8-1D2E3F4A5B6C"
 PRODUCT_CODE = str(uuid.uuid5(uuid.NAMESPACE_URL, f"DnsBlocker/{version}"))
 
@@ -109,7 +119,8 @@ by_dir["ApplicationProgramsFolder"].append(f'''      <Component Id="{shortcut_ci
         <Shortcut Id="UIStartMenu" Name="WinDNS Blocker"
           Description="WinDNS Blocker administration UI"
           Target="[UIDIR]DnsBlocker.UI.exe"
-          WorkingDirectory="UIDIR" />
+          WorkingDirectory="UIDIR"
+          Icon="ProductIcon" />
         <RemoveFolder Id="RemoveProgramMenu" On="uninstall" />
         <RegistryValue Root="HKLM" Key="Software\\DnsBlocker" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>''')
@@ -147,6 +158,8 @@ wxs = f'''<?xml version="1.0" encoding="utf-8"?>
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
                   AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon Id="ProductIcon" SourceFile="{xml_escape(str(icon_src))}" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
     <Feature Id="ProductFeature" Title="WinDNS Blocker" Level="1">
 {feature_refs}
     </Feature>

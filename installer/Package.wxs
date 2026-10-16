@@ -31,6 +31,9 @@
 
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <Icon Id="ProductIcon" SourceFile="Assets\DnsBlocker.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+
     <Feature Id="ProductFeature" Title="WinDNS Blocker" Description="Hub service and WPF UI" Level="1">
       <ComponentGroupRef Id="ServiceComponents" />
       <ComponentGroupRef Id="UiComponents" />
@@ -116,7 +119,8 @@
         Name="WinDNS Blocker"
         Description="WinDNS Blocker Hub UI"
         Target="[UiFolder]DnsBlocker.UI.exe"
-        WorkingDirectory="UiFolder" />
+        WorkingDirectory="UiFolder"
+        Icon="ProductIcon" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
       <RegistryValue
         Root="HKLM"

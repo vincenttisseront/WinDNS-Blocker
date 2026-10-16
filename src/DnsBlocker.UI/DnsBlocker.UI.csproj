@@ -6,13 +6,19 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <ApplicationIcon />
+    <ApplicationIcon>Assets\DnsBlocker.ico</ApplicationIcon>
     <RootNamespace>DnsBlocker.UI</RootNamespace>
     <AssemblyName>DnsBlocker.UI</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\DnsBlocker.Core\DnsBlocker.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\DnsBlocker.ico" />
+    <Resource Include="Assets\windns-blocker-logo.png" />
+    <Resource Include="Assets\windns-blocker-logo-64.png" />
   </ItemGroup>
 
 </Project>
