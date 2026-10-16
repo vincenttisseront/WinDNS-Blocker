@@ -346,7 +346,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Fix update crash + installer: detached msiexec, no UI crash on update failures (PR #16). Property CA Setup launch retained (type 242).",
+  "releaseNotes": "Default local DNS target without WinRM (PR #17). Property CA Setup launch retained (type 242).",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
