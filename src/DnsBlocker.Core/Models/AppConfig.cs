@@ -21,7 +21,11 @@ public sealed class AppConfig
     /// <summary>DENY or IGNORE</summary>
     public string PolicyAction { get; set; } = "DENY";
 
-    public int ChunkSize { get; set; } = 1000;
+    /// <summary>
+    /// Soft max domains per QRP policy before FQDN-budget packing. Prefer smaller values (≤250)
+    /// to avoid CIM/criteria failures on Windows DNS.
+    /// </summary>
+    public int ChunkSize { get; set; } = 200;
 
     public int MaxParallelTargets { get; set; } = 2;
 

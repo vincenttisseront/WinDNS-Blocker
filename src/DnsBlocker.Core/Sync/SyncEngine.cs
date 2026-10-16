@@ -60,7 +60,10 @@ public sealed class SyncEngine
                 _logger.LogWarning("Ingest completed with {Count} source errors", ingest.Errors.Count);
 
             _state.ReplaceDomains(ingest.Domains);
-            var chunks = DomainListParser.Chunk(ingest.Domains, Math.Max(1, config.ChunkSize));
+            var chunks = DomainListParser.ChunkByFqdnBudget(
+                ingest.Domains,
+                maxFqdnCriterionChars: Dns.PowerShellDnsPolicyProvider.DefaultMaxFqdnCriterionChars,
+                maxDomainsPerChunk: Math.Clamp(config.ChunkSize, 1, 500));
             _logger.LogInformation("Prepared {Domains} domains in {Chunks} policy chunks", ingest.Domains.Count, chunks.Count);
 
             var targets = config.DnsTargets
