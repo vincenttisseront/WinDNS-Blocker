@@ -332,6 +332,10 @@ public partial class MainWindow : Window
                 if (int.TryParse(MinuteBox.Text, out var minute))
                     cfg.ScheduledMinute = minute;
                 cfg.EnableStatsCollection = StatsCheck.IsChecked == true;
+                cfg.CuratedYoutubeAds = CuratedYoutubeAdsCheck.IsChecked == true;
+                cfg.CuratedOisdBig = CuratedOisdBigCheck.IsChecked == true;
+                cfg.CuratedOisdNsfw = CuratedOisdNsfwCheck.IsChecked == true;
+                cfg.CuratedChadmayfieldPorn = CuratedChadmayfieldCheck.IsChecked == true;
                 cfg.UpdateFeedUrl = UpdateFeedUrlBox.Text.Trim();
                 cfg.CheckUpdatesOnStartup = CheckUpdatesOnStartupBox.IsChecked == true;
                 cfg.AutoInstallUpdates = AutoInstallUpdatesBox.IsChecked == true;
