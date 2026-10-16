@@ -153,11 +153,18 @@ public sealed class IpcServer
 
                 case IpcProtocol.MethodInstallUpdate:
                 {
-                    var p = request.Params?.Deserialize<InstallUpdateParams>(IpcProtocol.JsonOptions)
-                            ?? new InstallUpdateParams();
-                    var result = await _runtime.InstallUpdateAsync(p.Manifest, p.Silent, cancellationToken)
-                        .ConfigureAwait(false);
-                    return IpcResponse.Success(request.Id, result);
+                    try
+                    {
+                        var p = request.Params?.Deserialize<InstallUpdateParams>(IpcProtocol.JsonOptions)
+                                ?? new InstallUpdateParams();
+                        var result = await _runtime.InstallUpdateAsync(p.Manifest, p.Silent, cancellationToken)
+                            .ConfigureAwait(false);
+                        return IpcResponse.Success(request.Id, result);
+                    }
+                    catch (Exception ex)
+                    {
+                        return IpcResponse.Failure(request.Id, "InstallUpdate failed: " + ex.Message);
+                    }
                 }
 
                 case IpcProtocol.MethodTestTargetWinRm:

@@ -180,7 +180,9 @@ public class UpdateCheckerTests
         Assert.NotNull(result.MsiPath);
         Assert.Contains("/qn", launcher.LastArguments);
         Assert.Contains(result.MsiPath!, launcher.LastArguments);
-        Assert.Equal("msiexec.exe", launcher.LastFileName);
+        Assert.Contains("msiexec.exe", launcher.LastArguments);
+        // Silent path detaches via cmd start /b so service StopServices cannot kill msiexec.
+        Assert.EndsWith("cmd.exe", launcher.LastFileName, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

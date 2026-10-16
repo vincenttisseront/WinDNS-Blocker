@@ -9,7 +9,7 @@ namespace DnsBlocker.Core.Updates;
 /// <summary>
 /// Downloads an MSI, verifies SHA-256, then launches msiexec.
 /// <list type="bullet">
-/// <item><description><c>silent=true</c> → <c>msiexec /i … /qn /norestart</c> (service / LocalSystem; no UI).</description></item>
+/// <item><description><c>silent=true</c> → detached <c>msiexec /i … /qn /norestart</c> (service / LocalSystem; survives StopServices).</description></item>
 /// <item><description><c>silent=false</c> → <c>msiexec /i … /qb /norestart</c> with <c>Verb=runas</c> so the interactive UI triggers UAC.</description></item>
 /// </list>
 /// Never terminates the host process after starting msiexec — the UI/service stay alive and report errors via
@@ -144,18 +144,9 @@ public sealed class UpdateInstaller
             }
 
             // /norestart: never reboot (would kill UI). Fire-and-forget msiexec; do not Kill/Exit host.
-            var uiFlag = silent ? "/qn" : "/qb";
-            var args = $"/i \"{msiPath}\" {uiFlag} /norestart";
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "msiexec.exe",
-                Arguments = args,
-                UseShellExecute = !silent,
-                // Interactive UI path: request elevation (UAC). Service path is already LocalSystem.
-                Verb = silent ? "" : "runas",
-                CreateNoWindow = silent,
-                WindowStyle = silent ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal
-            };
+            // Silent (service) path: detach via cmd start /b so SCM StopServices does not kill msiexec
+            // mid-upgrade (broken install + UI looking "crashed").
+            var startInfo = BuildMsiexecStartInfo(msiPath, silent);
 
             int? exit;
             try
@@ -210,6 +201,36 @@ public sealed class UpdateInstaller
             return Fail("Échec de l'installation de la mise à jour. / Update install failed. " +
                         Truncate(ex.Message, 160));
         }
+    }
+
+    /// <summary>
+    /// Silent installs detach msiexec from the service process tree so StopServices cannot abort the upgrade.
+    /// Interactive installs use msiexec + UAC (runas).
+    /// </summary>
+    internal static ProcessStartInfo BuildMsiexecStartInfo(string msiPath, bool silent)
+    {
+        if (silent)
+        {
+            var msiexecArgs = $"/i \"{msiPath}\" /qn /norestart";
+            return new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                Arguments = $"/c start \"DnsBlockerMsi\" /b msiexec.exe {msiexecArgs}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+        }
+
+        return new ProcessStartInfo
+        {
+            FileName = "msiexec.exe",
+            Arguments = $"/i \"{msiPath}\" /qb /norestart",
+            UseShellExecute = true,
+            Verb = "runas",
+            CreateNoWindow = false,
+            WindowStyle = ProcessWindowStyle.Normal
+        };
     }
 
     private async Task<string> ComputeSha256HexAsync(string path, CancellationToken cancellationToken)

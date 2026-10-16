@@ -56,8 +56,8 @@
         <TextBox x:Name="WhitelistsUrlBox"/>
         <TextBlock Text="{DynamicResource Cfg.PolicyAction}" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,0"/>
         <ComboBox x:Name="ActionBox" Width="160" HorizontalAlignment="Left">
-          <ComboBoxItem Content="DENY"/>
-          <ComboBoxItem Content="IGNORE" IsSelected="True"/>
+          <ComboBoxItem Content="DENY" IsSelected="True"/>
+          <ComboBoxItem Content="IGNORE"/>
         </ComboBox>
       </StackPanel>
 

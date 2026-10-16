@@ -346,7 +346,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Remote DNS analytical stats ingest and QRP block verification (PR #15). Property CA Setup launch retained (no FileKey 2753).",
+  "releaseNotes": "Fix update crash + installer: detached msiexec, no UI crash on update failures (PR #16). Property CA Setup launch retained (type 242).",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
