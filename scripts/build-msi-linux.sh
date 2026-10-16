@@ -346,7 +346,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "GUI Setup assistant (/setup): doctor+repair without PowerShell CLI; first-run handoff to UI; MSI launches assistant after install.",
+  "releaseNotes": "Remote DNS analytical stats ingest and QRP block verification (PR #15). Property CA Setup launch retained (no FileKey 2753).",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
