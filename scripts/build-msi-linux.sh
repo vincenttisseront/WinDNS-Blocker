@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# Build a Windows MSI on Linux using wixl (msitools). Produces artifacts/DnsBlocker-<Version>.msi
+# and artifacts/version.json. Not identical to WiX Toolset 5, but installable on Windows.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION="${1:-$(grep -oP '(?<=<Version>)[^<]+' "$ROOT/Directory.Build.props" | head -1 || echo 1.0.0)}"
+UPDATE_FEED_BASE="${UPDATE_FEED_BASE_URL:-https://example.com/releases}"
+CONFIGURATION="${CONFIGURATION:-Release}"
+
+export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
+export PATH="$DOTNET_ROOT:$PATH"
+
+PUBLISH="$ROOT/publish"
+SERVICE_OUT="$PUBLISH/service"
+UI_OUT="$PUBLISH/ui"
+ARTIFACTS="$ROOT/artifacts"
+STAGE="$ROOT/artifacts/msi-stage"
+WXS="$ARTIFACTS/DnsBlocker.generated.wxs"
+MSI="$ARTIFACTS/DnsBlocker-$VERSION.msi"
+
+command -v wixl >/dev/null || { echo "wixl required (apt install wixl)"; exit 1; }
+
+rm -rf "$STAGE" "$ARTIFACTS"
+mkdir -p "$SERVICE_OUT" "$UI_OUT" "$ARTIFACTS" "$STAGE/DnsBlocker/UI" "$STAGE/ProgramData/DnsBlocker/logs"
+
+echo "==> Publishing Service + UI (win-x64 self-contained)"
+dotnet publish "$ROOT/src/DnsBlocker.Service/DnsBlocker.Service.csproj" \
+  -c "$CONFIGURATION" -r win-x64 --self-contained true -o "$SERVICE_OUT"
+dotnet publish "$ROOT/src/DnsBlocker.UI/DnsBlocker.UI.csproj" \
+  -c "$CONFIGURATION" -r win-x64 --self-contained true -o "$UI_OUT" \
+  -p:EnableWindowsTargeting=true
+
+# Stage payload (exclude PDBs to keep MSI smaller)
+mkdir -p "$STAGE/DnsBlocker/UI"
+find "$SERVICE_OUT" -maxdepth 1 -type f ! -name '*.pdb' -exec cp -a {} "$STAGE/DnsBlocker/" \;
+# copy any service subdirs except pdb-only noise
+find "$SERVICE_OUT" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$STAGE/DnsBlocker/" \;
+find "$STAGE/DnsBlocker" -name '*.pdb' -delete
+find "$UI_OUT" -maxdepth 1 -type f ! -name '*.pdb' -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
+find "$UI_OUT" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
+find "$STAGE/DnsBlocker/UI" -name '*.pdb' -delete
+# ensure logs placeholder
+: > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
+
+python3 - "$STAGE" "$WXS" "$VERSION" <<'PY'
+import sys, uuid, hashlib
+from collections import defaultdict
+from pathlib import Path
+
+stage, wxs_path, version = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+UPGRADE_CODE = "8F3A2C1D-9B4E-4F6A-A7C8-1D2E3F4A5B6C"
+PRODUCT_CODE = str(uuid.uuid5(uuid.NAMESPACE_URL, f"DnsBlocker/{version}"))
+
+def gid(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "DnsBlocker/" + name)).upper()
+
+def xml_escape(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace('"', "&quot;"))
+
+root_files = stage / "DnsBlocker"
+all_files = sorted(p for p in root_files.rglob("*") if p.is_file())
+dir_ids = {Path("."): "INSTALLDIR", Path("UI"): "UIDIR"}
+for p in all_files:
+    parent = p.relative_to(root_files).parent
+    while parent != Path(".") and parent not in dir_ids:
+        dir_ids[parent] = "d" + hashlib.sha1(parent.as_posix().encode()).hexdigest()[:12]
+        parent = parent.parent
+
+by_dir: dict[str, list[str]] = defaultdict(list)
+component_ids: list[str] = []
+service_exe_cid = service_exe_fid = None
+
+for p in all_files:
+    rel = p.relative_to(root_files)
+    did = dir_ids[rel.parent]
+    cid = "c" + hashlib.sha1(rel.as_posix().encode()).hexdigest()[:16]
+    fid = "f" + hashlib.sha1(rel.as_posix().encode()).hexdigest()[:16]
+    component_ids.append(cid)
+    body = f'''      <Component Id="{cid}" Guid="{gid(rel.as_posix())}">
+        <File Id="{fid}" Source="{xml_escape(str(p))}" KeyPath="yes" />
+'''
+    if rel.as_posix().lower() == "dnsblocker.service.exe":
+        service_exe_cid, service_exe_fid = cid, fid
+        body += '''        <ServiceInstall Id="DnsBlockerServiceInstall" Name="DnsBlocker"
+          DisplayName="WinDNS Blocker Hub"
+          Description="WinDNS Blocker hub service"
+          Start="auto" Type="ownProcess" ErrorControl="normal" Vital="yes" />
+        <ServiceControl Id="DnsBlockerServiceControl" Name="DnsBlocker"
+          Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+'''
+    body += "      </Component>"
+    by_dir[did].append(body)
+
+if not service_exe_cid:
+    raise SystemExit("DnsBlocker.Service.exe not found in publish output")
+
+logs_cid = "cLogsFolder"
+component_ids.append(logs_cid)
+by_dir["LOGSDIR"].append(f'''      <Component Id="{logs_cid}" Guid="{gid("ProgramData/logs")}">
+        <CreateFolder />
+        <RegistryValue Root="HKLM" Key="Software\\DnsBlocker" Name="LogsFolder" Type="string" Value="[LOGSDIR]" KeyPath="yes" />
+      </Component>''')
+
+shortcut_cid = "cShortcut"
+component_ids.append(shortcut_cid)
+by_dir["ApplicationProgramsFolder"].append(f'''      <Component Id="{shortcut_cid}" Guid="{gid("shortcut")}">
+        <Shortcut Id="UIStartMenu" Name="WinDNS Blocker"
+          Description="WinDNS Blocker administration UI"
+          Target="[UIDIR]DnsBlocker.UI.exe"
+          WorkingDirectory="UIDIR" />
+        <RemoveFolder Id="RemoveProgramMenu" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="Software\\DnsBlocker" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>''')
+
+children: dict[Path, list[Path]] = defaultdict(list)
+for d in dir_ids:
+    if d != Path("."):
+        children[d.parent].append(d)
+
+def render_dirs(d: Path, indent: int) -> str:
+    pad = " " * indent
+    chunks = []
+    for child in sorted(children.get(d, []), key=lambda x: x.name.lower()):
+        chunks.append(f'{pad}<Directory Id="{dir_ids[child]}" Name="{xml_escape(child.name)}">')
+        nested = render_dirs(child, indent + 2)
+        if nested:
+            chunks.append(nested)
+        chunks.append(f"{pad}</Directory>")
+    return "\n".join(chunks)
+
+dir_refs = []
+for did, blocks in sorted(by_dir.items()):
+    dir_refs.append(f'    <DirectoryRef Id="{did}">')
+    dir_refs.extend(blocks)
+    dir_refs.append("    </DirectoryRef>")
+
+feature_refs = "\n".join(f'        <ComponentRef Id="{cid}" />' for cid in component_ids)
+wxs = f'''<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="{PRODUCT_CODE}" Name="WinDNS Blocker" Language="1033"
+           Version="{version}" Manufacturer="WinDNS Blocker"
+           UpgradeCode="{UPGRADE_CODE}">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="WinDNS Blocker hub (service + UI)" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Feature Id="ProductFeature" Title="WinDNS Blocker" Level="1">
+{feature_refs}
+    </Feature>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="DnsBlocker">
+{render_dirs(Path("."), 10)}
+        </Directory>
+      </Directory>
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="APPDATAROOT" Name="DnsBlocker">
+          <Directory Id="LOGSDIR" Name="logs" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="WinDNS Blocker" />
+      </Directory>
+    </Directory>
+  </Product>
+  <Fragment>
+{chr(10).join(dir_refs)}
+  </Fragment>
+</Wix>
+'''
+wxs_path.write_text(wxs, encoding="utf-8")
+print(f"Generated {wxs_path} with {len(component_ids)} components across {len(by_dir)} directories")
+PY
+
+echo "==> Compiling MSI with wixl"
+# wixl: -a x64 for 64-bit
+wixl -v -a x64 -o "$MSI" "$WXS"
+
+SHA=$(sha256sum "$MSI" | awk '{print $1}')
+PUBLISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+MSI_URL="${UPDATE_FEED_BASE%/}/DnsBlocker-$VERSION.msi"
+cat > "$ARTIFACTS/version.json" <<EOF
+{
+  "version": "$VERSION",
+  "msiUrl": "$MSI_URL",
+  "sha256": "$SHA",
+  "releaseNotes": "Linux wixl build of WinDNS Blocker $VERSION (self-contained win-x64).",
+  "publishedAt": "$PUBLISHED_AT"
+}
+EOF
+
+echo "==> Done"
+ls -lh "$MSI"
+echo "SHA256: $SHA"
+echo "Feed:   $ARTIFACTS/version.json"
