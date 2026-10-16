@@ -117,6 +117,67 @@ public static partial class DomainListParser
             .ToList();
     }
 
+    /// <summary>
+    /// Packs domains into FQDN criterion chunks that stay under <paramref name="maxFqdnCriterionChars"/>
+    /// including the leading "EQ," and separating commas (Windows CIM / QRP practical limit).
+    /// </summary>
+    public static IReadOnlyList<IReadOnlyList<string>> ChunkByFqdnBudget(
+        IEnumerable<string> domains,
+        int maxFqdnCriterionChars,
+        int maxDomainsPerChunk = 250)
+    {
+        if (maxFqdnCriterionChars < 32)
+            throw new ArgumentOutOfRangeException(nameof(maxFqdnCriterionChars));
+        if (maxDomainsPerChunk < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxDomainsPerChunk));
+
+        var ordered = domains
+            .Where(d => !string.IsNullOrWhiteSpace(d) && !d.Contains(',', StringComparison.Ordinal))
+            .Select(d => d.Trim().Trim('.').ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var chunks = new List<IReadOnlyList<string>>();
+        var current = new List<string>();
+        // "EQ," prefix
+        var used = 3;
+
+        foreach (var domain in ordered)
+        {
+            var extra = (current.Count == 0 ? 0 : 1) + domain.Length; // comma + domain
+            if (current.Count >= maxDomainsPerChunk || (current.Count > 0 && used + extra > maxFqdnCriterionChars))
+            {
+                chunks.Add(current);
+                current = [];
+                used = 3;
+                extra = domain.Length;
+            }
+
+            if (3 + domain.Length > maxFqdnCriterionChars)
+            {
+                // Single domain exceeds budget — still emit alone so caller sees it rather than drop silently.
+                if (current.Count > 0)
+                {
+                    chunks.Add(current);
+                    current = [];
+                }
+
+                chunks.Add(new List<string> { domain });
+                used = 3;
+                continue;
+            }
+
+            current.Add(domain);
+            used += extra;
+        }
+
+        if (current.Count > 0)
+            chunks.Add(current);
+
+        return chunks;
+    }
+
     public static HashSet<string> ApplyWhitelist(IEnumerable<string> blocked, IEnumerable<string> whitelist)
     {
         var wl = new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase);

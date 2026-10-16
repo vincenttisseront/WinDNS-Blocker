@@ -22,6 +22,29 @@ Hub (service + UI)
 - WinRM reachability + DNS admin rights on each target
 - If DNS policies already replicate via AD, you may list a single target; otherwise list every DNS you want updated
 
+### Remote DNS ops (QRP push) — Vincent / windc05 checklist
+
+Sync uses `Add-DnsServerQueryResolutionPolicy -ComputerName <target>`. Common failure **WIN32 1011** means *“The configuration registry key could not be opened”* — **not** a bad domain list.
+
+On **each DNS target** (e.g. `windc05.ar-systems.fr`):
+
+1. Hub service account ∈ **DnsAdmins** (or local **Administrators** / Domain Admins).
+2. Grant that account (or DnsAdmins) **Full Control** on  
+   `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server` (include subkeys).  
+   DnsAdmins alone can read DNS but often cannot write policy keys → WIN32 1011.
+3. **DnsServer** PowerShell module present on the hub; WinRM/CIM allowed hub → target (firewall 5985/5986).
+4. Retry sync after ACL change. Stale `DnsBlocker_*` policies are removed/recreated idempotently by the hub.
+
+Quick probe from the hub (elevated):
+
+```powershell
+Import-Module DnsServer
+Get-DnsServerQueryResolutionPolicy -ComputerName windc05.ar-systems.fr
+Add-DnsServerQueryResolutionPolicy -ComputerName windc05.ar-systems.fr `
+  -Name DnsBlocker_Probe -Action DENY -Fqdn 'EQ,probe.invalid.example'
+Remove-DnsServerQueryResolutionPolicy -ComputerName windc05.ar-systems.fr -Name DnsBlocker_Probe -Force
+```
+
 ## Build
 
 ```powershell
