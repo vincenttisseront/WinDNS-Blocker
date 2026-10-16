@@ -92,6 +92,11 @@ if ($runningOnWindows) {
     dotnet publish (Join-Path $repoRoot "src\DnsBlocker.UI\DnsBlocker.UI.csproj") `
         -o $uiOut @publishArgs
     if ($LASTEXITCODE -ne 0) { throw "UI publish failed (exit $LASTEXITCODE)." }
+    # Ensure on-disk .ico ships next to UI (Shortcut Icon table + ARP use installer Assets separately).
+    $uiIcon = Join-Path $repoRoot "src\DnsBlocker.UI\Assets\DnsBlocker.ico"
+    if (Test-Path $uiIcon) {
+        Copy-Item -Force $uiIcon (Join-Path $uiOut "DnsBlocker.ico")
+    }
     $uiPublished = $true
 }
 else {
@@ -114,11 +119,21 @@ else {
     $servicePublishDir = $serviceOut.TrimEnd('\') + '\'
     $uiPublishDir = $uiOut.TrimEnd('\') + '\'
 
+    $toolsDir = (Join-Path $repoRoot "scripts").TrimEnd('\') + '\'
+    foreach ($tool in @('doctor.ps1', 'Verify-Install.cmd')) {
+        $toolPath = Join-Path $toolsDir $tool
+        if (-not (Test-Path -LiteralPath $toolPath)) {
+            throw "Required installer tool missing: $toolPath (ToolsDir must include doctor.ps1 and Verify-Install.cmd)"
+        }
+    }
+    Write-Host "ToolsDir OK: doctor.ps1 + Verify-Install.cmd"
+
     dotnet build $installerProj `
         -c $Configuration `
         -p:Version=$Version `
         -p:ServicePublishDir=$servicePublishDir `
-        -p:UiPublishDir=$uiPublishDir
+        -p:UiPublishDir=$uiPublishDir `
+        -p:ToolsDir=$toolsDir
     if ($LASTEXITCODE -ne 0) { throw "WiX MSI build failed (exit $LASTEXITCODE)." }
 
     if (-not (Test-Path $msiPath)) {

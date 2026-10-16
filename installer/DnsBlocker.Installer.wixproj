@@ -9,6 +9,7 @@
     <DefineConstants>Version=$(Version)</DefineConstants>
     <ServicePublishDir Condition="'$(ServicePublishDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\publish\service'))\</ServicePublishDir>
     <UiPublishDir Condition="'$(UiPublishDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\publish\ui'))\</UiPublishDir>
+    <ToolsDir Condition="'$(ToolsDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\scripts'))\</ToolsDir>
     <OutputName>DnsBlocker-$(Version)</OutputName>
     <OutputPath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\artifacts'))\</OutputPath>
     <IntermediateOutputPath>$(MSBuildThisFileDirectory)obj\$(Configuration)\</IntermediateOutputPath>
@@ -17,6 +18,7 @@
   <ItemGroup>
     <BindPath Include="$(ServicePublishDir)" BindName="ServicePublish" />
     <BindPath Include="$(UiPublishDir)" BindName="UiPublish" />
+    <BindPath Include="$(ToolsDir)" BindName="ToolsDir" />
   </ItemGroup>
 
 </Project>

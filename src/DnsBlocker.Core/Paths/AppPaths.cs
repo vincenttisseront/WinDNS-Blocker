@@ -28,4 +28,34 @@ public static class AppPaths
         Directory.CreateDirectory(DataDirectory);
         Directory.CreateDirectory(LogDirectory);
     }
+
+    /// <summary>
+    /// Best-effort ACL so interactive users can read logs while SYSTEM retains full control.
+    /// Safe to call repeatedly; no-ops on non-Windows or if icacls is unavailable.
+    /// </summary>
+    public static void TryHardenDataDirectoryAcl()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        try
+        {
+            EnsureDirectories();
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "icacls.exe",
+                Arguments = $"\"{DataDirectory}\" /grant \"NT AUTHORITY\\SYSTEM:(OI)(CI)F\" \"BUILTIN\\Administrators:(OI)(CI)F\" \"BUILTIN\\Users:(OI)(CI)RX\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            p?.WaitForExit(5000);
+        }
+        catch
+        {
+            // ignore — doctor.ps1 can fix ACLs later
+        }
+    }
 }
