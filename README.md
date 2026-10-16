@@ -123,7 +123,7 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\DnsBlocker\doctor.ps1
 
 Check `C:\ProgramData\DnsBlocker\logs\service-startup-failure.log` and `ui-crash.log` if the UI closes immediately.
 
-**Upgrades:** MajorUpgrade (`AllowSameVersionUpgrades`, schedule `afterInstallInitialize`) stops the service before replacing files so the hub survives in-place upgrades. Fixed `UpgradeCode` in `installer/Package.wxs`.
+**Upgrades:** MajorUpgrade (`AllowSameVersionUpgrades`, `RemoveExistingProducts` after `InstallFinalize`) so a failed mid-upgrade cannot wipe `DnsBlocker.UI.exe` while leaving Start Menu shortcuts. Fixed `UpgradeCode` in `installer/Package.wxs`.
 
 ### In-app updates
 
@@ -131,7 +131,7 @@ Default `UpdateFeedUrl` (also shown in the first-run wizard):
 
 `https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json`
 
-That stable “latest” asset URL always follows the newest GitHub release that publishes `version.json`. Clear the field to disable checks. The service checks about daily; if `AutoInstallUpdates` is true it runs silent `msiexec /i … /qn` as LocalSystem (MSI ServiceControl stops/restarts the hub — do not stop the service yourself). With auto-install off, the UI notifies only (**Check for updates** / startup check). IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
+That stable “latest” asset URL always follows the newest GitHub release that publishes `version.json`. Clear the field to disable checks. **Check for updates** downloads the MSI in the UI, launches elevated `msiexec /qb`, then **exits the UI** so files unlock. Auto-install (service) kills the UI process first, then runs detached silent msiexec. IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
 
 Publish both `DnsBlocker-<Version>.msi` and `version.json` as release assets on every tag so the latest feed stays valid.
 
@@ -161,13 +161,20 @@ msiexec /i DnsBlocker-1.0.11.msi /l*v $env:TEMP\dnsblocker-install.log
 2. **Open configuration** launches the first-run wizard (`/firstrun`) which writes `%ProgramData%\DnsBlocker\setup-complete.flag` + `setupWizardCompleted` when done.
 3. Start Menu also has **WinDNS Blocker Setup assistant**; the main UI has **Wizard…** and repair flows (launches `Repair-DnsBlocker.cmd` under InstallRoot).
 
-**Broken/sparse install** (GUI preferred; CLI fallback):
+**Broken/sparse install** (Missing Shortcut / UI.exe gone after a bad in-app update):
 
-- Double-click `C:\Program Files\DnsBlocker\Repair-DnsBlocker.cmd` (or **Repair** in the wizard), or:
-```powershell
-irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/main/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1
-powershell -ExecutionPolicy Bypass -File $env:TEMP\Repair-DnsBlocker.ps1
+1. Download `DnsBlocker-1.0.20.msi` (or newer) into Downloads.
+2. Elevated CMD: run `Recover-DnsBlocker.cmd` from the MSI payload, or copy it from the repo `scripts\` folder next to the MSI and double-click it.
+3. Or manual:
+```cmd
+wmic product where "Name like 'WinDNS Blocker%%'" call uninstall
+msiexec /x {E0CA6415-35DC-5408-8EAC-AC670C017A39} /qn
+msiexec /x {C0E48BDA-FEEB-58EA-AA60-D8D8D6A5D322} /qn
+del /f /q "%ProgramData%\Microsoft\Windows\Start Menu\Programs\WinDNS Blocker\*.*"
+msiexec /i "%USERPROFILE%\Downloads\DnsBlocker-1.0.20.msi" /qb
 ```
+
+If `UI\DnsBlocker.UI.exe` still exists, `Repair-DnsBlocker.cmd` opens Setup; if missing it forwards to `Recover-DnsBlocker.cmd`.
 
 Server requirement: **Windows Server with Desktop Experience** (WPF UI). Server Core cannot host the UI.
 
