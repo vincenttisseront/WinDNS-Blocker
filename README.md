@@ -118,7 +118,15 @@ Set `DNSBLOCKER_USE_MOCK=1` to force the in-memory DNS provider (also automatic 
 
 1. **No regex** — Steve Jenkins `regex.txt` cannot be imported into QRP.
 2. **Policy size** — domains are chunked (~1000 FQDN/policy by default). Very large lists may still hit DNS API limits; consider reducing sources or raising operational monitoring.
-3. **Stats** — Phase C uses DNS analytical ETW when enabled; without it the Stats tab shows an empty/actionable message (not a full Pi-hole live dashboard).
+3. **Stats** — Phase C uses hub-local DNS analytical ETW (`Microsoft-Windows-DNSServer`) when enabled; without Analytical logging the Stats tab shows an empty/actionable message. Top called/blocked domains come from SQLite `query_events` (ETW or synthetic), not a remote per-DC analytics API. “Blocked” means the query name is on the hub blocklist, not a confirmed QRP DENY on the wire.
+4. **YouTube / CDN ads** — many mobile ad requests share the same hostnames as video delivery; pure DNS blocklists often cannot remove YouTube ads. Use **Statut → Vérifier les politiques QRP** and **Stats** tops to confirm the hub is applying `DnsBlocker_*` policies and seeing queries — not to expect zero ads on phone YouTube.
+5. **Sync ≠ applied** — a successful push records chunk counts in SQLite; live presence/enabled state is verified separately via `Get-DnsServerQueryResolutionPolicy` (IPC `GetTargetPolicyStatus`).
+
+### Verify on a phone (point DNS at the farm)
+
+1. Configure the hub target (e.g. `windc05.ar-systems.fr`) and run **Mettre à jour maintenant**.
+2. On **Statut**, click **Vérifier les politiques QRP** — expect `DnsBlocker_*` installées = activées and matching the last sync count.
+3. On the phone, set DNS to that same Windows DNS (or a resolver that forwards to it), browse, then **Stats → Charger** (enable ETW collection on the hub first). Top domaines appelés/bloqués should move if the phone really uses that DNS.
 
 ## Uninstall
 
