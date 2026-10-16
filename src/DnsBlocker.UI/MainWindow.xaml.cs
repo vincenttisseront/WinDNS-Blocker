@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using DnsBlocker.Core.Config;
+using DnsBlocker.Core.Diagnostics;
 using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
@@ -108,11 +109,12 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowServiceDisconnected(ex.Message);
-            _journal.Write(Loc.F("Main.Journal.StartupError", ex.Message));
+            var detail = ExceptionText.FormatUserFacing(ex);
+            ShowServiceDisconnected(detail);
+            _journal.Write(Loc.F("Main.Journal.StartupError", detail));
             RefreshLogsView();
             MessageBox.Show(
-                Loc.F("Main.StartupErrorBox", ex.Message),
+                Loc.F("Main.StartupErrorBox", detail),
                 Loc.T("AppName"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -121,8 +123,18 @@ public partial class MainWindow : Window
 
     private async void Wizard_Click(object sender, RoutedEventArgs e)
     {
-        _journal.Write(Loc.T("Main.Journal.RelaunchWizard"));
-        await MaybeShowSetupWizardAsync(force: true).ConfigureAwait(true);
+        try
+        {
+            _journal.Write(Loc.T("Main.Journal.RelaunchWizard"));
+            await MaybeShowSetupWizardAsync(force: true).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            var detail = ExceptionText.FormatUserFacing(ex);
+            _journal.Write(Loc.F("Main.Journal.StartupError", detail));
+            RefreshLogsView();
+            MessageBox.Show(detail, Loc.T("AppName"), MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private async void TargetWizard_Click(object sender, RoutedEventArgs e)
@@ -783,7 +795,7 @@ public partial class MainWindow : Window
             }
             catch { /* ignore */ }
 
-            ShowServiceDisconnected(ex.Message, probe);
+            ShowServiceDisconnected(ExceptionText.FormatUserFacing(ex), probe);
         }
         finally
         {

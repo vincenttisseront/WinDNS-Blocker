@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
+using DnsBlocker.Core.Diagnostics;
 using DnsBlocker.Core.Paths;
 using DnsBlocker.UI.Localization;
 
@@ -10,12 +11,22 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        // Culture + string dictionaries before any Window InitializeComponent.
-        UiCulture.ApplyFromConfig();
-
+        // Register handlers before culture/resources so startup failures still get a dialog + log.
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+
+        try
+        {
+            // Culture + string dictionaries before any Window InitializeComponent.
+            UiCulture.ApplyFromConfig();
+        }
+        catch (Exception ex)
+        {
+            LogCrash("UiCulture.ApplyFromConfig", ex);
+            // Continue with default Loc language / merged dictionary from App.xaml.
+        }
+
         base.OnStartup(e);
 
         var args = e.Args ?? [];
@@ -53,6 +64,24 @@ public partial class App : Application
             LogCrash("UnhandledException", ex);
             ShowFatal(Loc.T("Err.Fatal"), ex);
         }
+        else
+        {
+            LogCrashRaw("UnhandledException", e.ExceptionObject?.ToString() ?? "(null ExceptionObject)");
+            try
+            {
+                MessageBox.Show(
+                    Loc.F("Err.CrashBody", Loc.T("Err.Fatal"),
+                        e.ExceptionObject?.GetType().FullName ?? "(non-Exception)",
+                        Path.Combine(AppPaths.LogDirectory, "ui-crash.log")),
+                    Loc.T("AppName"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch
+            {
+                // last resort
+            }
+        }
     }
 
     private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
@@ -66,15 +95,32 @@ public partial class App : Application
     {
         try
         {
+            var detail = ExceptionText.FormatUserFacing(ex);
+            var logPath = Path.Combine(AppPaths.LogDirectory, "ui-crash.log");
             MessageBox.Show(
-                Loc.F("Err.CrashBody", title, ex.Message, Path.Combine(AppPaths.LogDirectory, "ui-crash.log")),
+                Loc.F("Err.CrashBody", title, detail, logPath),
                 Loc.T("AppName"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
         catch
         {
-            // last resort — never rethrow from the handler
+            // Absolute last resort — never rethrow from the handler, never show a blank body.
+            try
+            {
+                MessageBox.Show(
+                    "WinDNS Blocker hit an error but stays open.\n\n"
+                    + ExceptionText.FormatUserFacing(ex)
+                    + "\n\nLog: "
+                    + Path.Combine(AppPaths.LogDirectory, "ui-crash.log"),
+                    "WinDNS Blocker",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch
+            {
+                // ignore
+            }
         }
     }
 
@@ -85,7 +131,22 @@ public partial class App : Application
             AppPaths.EnsureDirectories();
             var path = Path.Combine(AppPaths.LogDirectory, "ui-crash.log");
             File.AppendAllText(path,
-                $"{DateTimeOffset.Now:u} [{kind}]{Environment.NewLine}{ex}{Environment.NewLine}{Environment.NewLine}");
+                $"{DateTimeOffset.Now:u} [{kind}]{Environment.NewLine}{ExceptionText.FormatForLog(ex)}{Environment.NewLine}");
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static void LogCrashRaw(string kind, string text)
+    {
+        try
+        {
+            AppPaths.EnsureDirectories();
+            var path = Path.Combine(AppPaths.LogDirectory, "ui-crash.log");
+            File.AppendAllText(path,
+                $"{DateTimeOffset.Now:u} [{kind}]{Environment.NewLine}{text}{Environment.NewLine}{Environment.NewLine}");
         }
         catch
         {

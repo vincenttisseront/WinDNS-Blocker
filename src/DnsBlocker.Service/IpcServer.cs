@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using DnsBlocker.Core.Diagnostics;
 using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Paths;
@@ -163,7 +164,8 @@ public sealed class IpcServer
                     }
                     catch (Exception ex)
                     {
-                        return IpcResponse.Failure(request.Id, "InstallUpdate failed: " + ex.Message);
+                        return IpcResponse.Failure(request.Id,
+                            "InstallUpdate failed: " + ExceptionText.NonEmptyMessage(ex));
                     }
                 }
 
@@ -207,7 +209,8 @@ public sealed class IpcServer
         }
         catch (Exception ex)
         {
-            return IpcResponse.Failure(request.Id, ex.Message);
+            // Never return Error="" — UI used to show a blank "Unexpected error:" dialog.
+            return IpcResponse.Failure(request.Id, ExceptionText.FormatUserFacing(ex));
         }
     }
 

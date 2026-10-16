@@ -135,7 +135,7 @@ internal static class LocCatalog
         ["Err.Unexpected"] = ("Unexpected error", "Erreur inattendue"),
         ["Err.Fatal"] = ("Fatal error", "Erreur fatale"),
         ["Err.Async"] = ("Async error", "Erreur asynchrone"),
-        ["Err.CrashBody"] = ("WinDNS Blocker hit an error but stays open.\n\n{0}:\n{1}\n\nIf the DnsBlocker service is not running, use « Start service ».\nDiagnostic: Start Menu → « WinDNS Blocker Setup assistant »\nLog: {2}", "WinDNS Blocker a rencontré une erreur mais reste ouvert.\n\n{0}:\n{1}\n\nSi le service DnsBlocker n'est pas démarré, utilisez le bouton « Démarrer le service ».\nDiagnostic : menu Démarrer → « WinDNS Blocker Setup assistant »\nJournal : {2}"),
+        ["Err.CrashBody"] = ("WinDNS Blocker hit an error but stays open.\n\n{0}:\n{1}\n\nIf the DnsBlocker service is not running, use « Start service ».\nDiagnostic: Start Menu → « WinDNS Blocker Setup assistant »\nLog (full stack): {2}", "WinDNS Blocker a rencontré une erreur mais reste ouvert.\n\n{0}:\n{1}\n\nSi le service DnsBlocker n'est pas démarré, utilisez le bouton « Démarrer le service ».\nDiagnostic : menu Démarrer → « WinDNS Blocker Setup assistant »\nJournal (stack complète) : {2}"),
         ["Main.DomainDetected"] = ("Domain detected on this machine: {0}", "Domaine détecté sur cette machine : {0}"),
         ["Main.DomainWorkgroup"] = ("No DNS/AD suffix detected (workgroup). Enter a domain to search in the blocklist.", "Aucun suffixe DNS/AD détecté (workgroup). Saisissez un domaine à rechercher dans la blocklist."),
         ["Main.Journal.DomainDetected"] = ("Machine domain detected: {0}", "Domaine machine détecté : {0}"),

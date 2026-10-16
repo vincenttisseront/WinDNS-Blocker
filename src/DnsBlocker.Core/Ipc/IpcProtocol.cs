@@ -54,8 +54,15 @@ public sealed class IpcResponse
         return new IpcResponse { Id = id, Ok = true, Result = element };
     }
 
-    public static IpcResponse Failure(string id, string error) =>
-        new() { Id = id, Ok = false, Error = error };
+    public static IpcResponse Failure(string id, string? error) =>
+        new()
+        {
+            Id = id,
+            Ok = false,
+            Error = string.IsNullOrWhiteSpace(error)
+                ? "IPC failure (empty error message)."
+                : error.Trim()
+        };
 }
 
 public sealed class SearchDomainsParams

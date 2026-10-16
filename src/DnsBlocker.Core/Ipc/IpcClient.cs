@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using DnsBlocker.Core.Diagnostics;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Paths;
 using DnsBlocker.Core.Stats;
@@ -162,7 +163,13 @@ public sealed class IpcClient : IAsyncDisposable
                            ?? throw new InvalidOperationException("Réponse IPC invalide.");
 
             if (!response.Ok)
-                throw new InvalidOperationException(response.Error ?? "Appel IPC échoué.");
+            {
+                // Empty-string Error must not become InvalidOperationException("") — blank UI dialogs.
+                var err = string.IsNullOrWhiteSpace(response.Error)
+                    ? "Appel IPC échoué (service returned Ok=false with empty Error)."
+                    : response.Error.Trim();
+                throw new InvalidOperationException(err);
+            }
 
             if (response.Result is null)
                 throw new InvalidOperationException("Réponse IPC sans résultat.");
@@ -181,7 +188,8 @@ public sealed class IpcClient : IAsyncDisposable
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                "Erreur de communication avec le service DnsBlocker: " + ex.Message,
+                "Erreur de communication avec le service DnsBlocker: "
+                + ExceptionText.NonEmptyMessage(ex),
                 ex);
         }
     }
