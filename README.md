@@ -77,7 +77,9 @@ Release builds produce a Windows Installer package via [WiX Toolset 5](https://w
 
 ```powershell
 # Publish Service + UI (win-x64) and build artifacts/DnsBlocker-<Version>.msi
+# Default msiUrl base: GitHub Releases download/v<Version>/
 .\scripts\build-release.ps1
+.\scripts\build-release.ps1 -Version 1.2.0
 .\scripts\build-release.ps1 -Version 1.2.0 -UpdateFeedBaseUrl https://example.com/releases
 
 # Optional: self-contained publish
@@ -89,7 +91,7 @@ Outputs:
 | Artifact | Path |
 |----------|------|
 | MSI | `artifacts/DnsBlocker-<Version>.msi` |
-| Updater feed | `artifacts/version.json` (`version`, `msiUrl`, `sha256`, `releaseNotes`, `publishedAt`) |
+| Updater feed | `artifacts/version.json` (`version`, `msiUrl`, `sha256`, `releaseNotes`, `publishedAt`) — upload next to the MSI on the GitHub release |
 
 The MSI installs:
 
@@ -112,7 +114,13 @@ Check `C:\ProgramData\DnsBlocker\logs\service-startup-failure.log` and `ui-crash
 
 ### In-app updates
 
-Point `UpdateFeedUrl` in config (or the Configuration tab) at a published `version.json`. The service checks about daily; if `AutoInstallUpdates` is true it runs silent `msiexec /i … /qn` as LocalSystem (MSI ServiceControl stops/restarts the hub — do not stop the service yourself). With auto-install off, the UI notifies only (`Vérifier les mises à jour` / startup check). IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
+Default `UpdateFeedUrl` (also shown in the first-run wizard):
+
+`https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json`
+
+That stable “latest” asset URL always follows the newest GitHub release that publishes `version.json`. Clear the field to disable checks. The service checks about daily; if `AutoInstallUpdates` is true it runs silent `msiexec /i … /qn` as LocalSystem (MSI ServiceControl stops/restarts the hub — do not stop the service yourself). With auto-install off, the UI notifies only (`Vérifier les mises à jour` / startup check). IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
+
+Publish both `DnsBlocker-<Version>.msi` and `version.json` as release assets on every tag so the latest feed stays valid.
 
 **Linux MSI (wixl):** on this Cloud Agent / Ubuntu you can also produce an installable MSI without WiX Toolset:
 
