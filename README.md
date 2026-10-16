@@ -102,19 +102,20 @@ Requires `wixl` (`apt install wixl`). This is self-contained win-x64 (service + 
 
 ```powershell
 # Elevated — after downloading the release MSI
-msiexec /i DnsBlocker-1.0.6.msi /l*v $env:TEMP\dnsblocker-install.log
-powershell -ExecutionPolicy Bypass -File "C:\Program Files\DnsBlocker\doctor.ps1" -StartServiceIfStopped
+msiexec /i DnsBlocker-1.0.7.msi /l*v $env:TEMP\dnsblocker-install.log
 ```
 
-**After MSI install (no PowerShell needed):** the Setup assistant opens automatically (`DnsBlocker.UI.exe /setup`). It runs the same checks as `doctor.ps1`, can repair a sparse install, then opens the UI in **configuration initiale** (`/firstrun` + `%ProgramData%\DnsBlocker\firstrun.pending`).
+**After MSI install (no PowerShell needed):**
 
-You can also open **Menu Démarrer → Assistant d'installation WinDNS Blocker**.
+1. **Assistant d'installation** opens (`DnsBlocker.UI.exe /setup`) — health check / repair (French UI).
+2. **Ouvrir la configuration** launches the first-run wizard (`/firstrun`) which writes `%ProgramData%\DnsBlocker\setup-complete.flag` + `setupWizardCompleted` when done.
+3. Start Menu also has **Assistant d'installation WinDNS Blocker**; the main UI has **Assistant…** and **Réparer l'installation** (launches `Repair-DnsBlocker.cmd` under InstallRoot).
 
-**Broken/sparse install** (CLI fallback still available):
+**Broken/sparse install** (GUI preferred; CLI fallback):
 
+- Double-click `C:\Program Files\DnsBlocker\Repair-DnsBlocker.cmd` (or **Réparer** in the wizard), or:
 ```powershell
-# Elevated — downloads MSI, uninstalls partial product, reinstalls, runs doctor
-irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/release/1.0.4/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1
+irm https://raw.githubusercontent.com/vincenttisseront/WinDNS-Blocker/feat/installer-gui-setup/scripts/Repair-DnsBlocker.ps1 -OutFile $env:TEMP\Repair-DnsBlocker.ps1
 powershell -ExecutionPolicy Bypass -File $env:TEMP\Repair-DnsBlocker.ps1
 ```
 

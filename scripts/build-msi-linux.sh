@@ -256,6 +256,7 @@ trap 'rm -rf "$TMP_EXTRACT"' EXIT
 if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
   DOCTOR=$(find "$TMP_EXTRACT" -iname 'doctor.ps1' | head -1 || true)
   VERIFY=$(find "$TMP_EXTRACT" -iname 'Verify-Install.cmd' | head -1 || true)
+  REPAIR_CMD=$(find "$TMP_EXTRACT" -iname 'Repair-DnsBlocker.cmd' | head -1 || true)
   SVC_EXE=$(find "$TMP_EXTRACT" -path '*/DnsBlocker/DnsBlocker.Service.exe' | head -1 || true)
   UI_EXE=$(find "$TMP_EXTRACT" -path '*/DnsBlocker/UI/DnsBlocker.UI.exe' | head -1 || true)
   HOSTFXR=$(find "$TMP_EXTRACT" -path '*/DnsBlocker/hostfxr.dll' | head -1 || true)
@@ -265,6 +266,10 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
   fi
   if [[ -z "$VERIFY" ]]; then
     echo "FAIL: MSI is missing Verify-Install.cmd" >&2
+    exit 1
+  fi
+  if [[ -z "$REPAIR_CMD" ]]; then
+    echo "FAIL: MSI is missing Repair-DnsBlocker.cmd (GUI repair helper for InstallRepairLauncher)" >&2
     exit 1
   fi
   if [[ -z "$SVC_EXE" ]]; then
@@ -291,6 +296,7 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
   fi
   echo "OK: MSI contains $DOCTOR"
   echo "OK: MSI contains $VERIFY"
+  echo "OK: MSI contains $REPAIR_CMD"
   echo "OK: MSI contains $SVC_EXE"
   echo "OK: MSI contains $UI_EXE"
   echo "OK: MSI contains $HOSTFXR"
