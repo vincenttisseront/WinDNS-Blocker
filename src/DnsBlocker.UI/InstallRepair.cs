@@ -70,10 +70,13 @@ internal static class InstallRepair
         progress?.Report(Loc.T("Repair.Msiexec"));
         try
         {
+            // REINSTALL=ALL helps same-ProductCode repair of a half-installed product;
+            // for a newer ProductCode, MajorUpgrade still applies and ignores REINSTALL harmlessly.
             var psi = new ProcessStartInfo
             {
                 FileName = "msiexec.exe",
-                Arguments = "/i \"" + msiPath + "\" /l*v \"" + log + "\" /qb /norestart",
+                Arguments = "/i \"" + msiPath + "\" REINSTALL=ALL REINSTALLMODE=vomus /l*v \"" + log +
+                            "\" /qb /norestart",
                 UseShellExecute = true,
                 Verb = "runas"
             };

@@ -57,7 +57,7 @@ find "$UI_OUT" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$STAGE/DnsBlocker
 find "$STAGE/DnsBlocker/UI" -name '*.pdb' -delete
 # Post-install tools (REQUIRED — v1.0.3 logo MSI omitted these; never skip)
 # Repair*.cmd launch UI /setup (GUI) — contract with InstallRepairLauncher / PR #6
-for tool in doctor.ps1 Verify-Install.cmd Repair-DnsBlocker.ps1 Repair-DnsBlocker.cmd Repair.cmd Install-DnsBlocker.ps1; do
+for tool in doctor.ps1 Verify-Install.cmd Repair-DnsBlocker.ps1 Repair-DnsBlocker.cmd Repair.cmd Recover-DnsBlocker.cmd Install-DnsBlocker.ps1; do
   if [[ ! -f "$ROOT/scripts/$tool" ]]; then
     echo "FAIL: missing required tool scripts/$tool" >&2
     exit 1
@@ -65,11 +65,12 @@ for tool in doctor.ps1 Verify-Install.cmd Repair-DnsBlocker.ps1 Repair-DnsBlocke
   cp -a "$ROOT/scripts/$tool" "$STAGE/DnsBlocker/$tool"
 done
 if [[ ! -f "$STAGE/DnsBlocker/doctor.ps1" ]] || [[ ! -f "$STAGE/DnsBlocker/Verify-Install.cmd" ]] \
-   || [[ ! -f "$STAGE/DnsBlocker/Repair-DnsBlocker.cmd" ]] || [[ ! -f "$STAGE/DnsBlocker/Repair.cmd" ]]; then
+   || [[ ! -f "$STAGE/DnsBlocker/Repair-DnsBlocker.cmd" ]] || [[ ! -f "$STAGE/DnsBlocker/Repair.cmd" ]] \
+   || [[ ! -f "$STAGE/DnsBlocker/Recover-DnsBlocker.cmd" ]]; then
   echo "FAIL: tools not staged under $STAGE/DnsBlocker" >&2
   exit 1
 fi
-echo "Staged tools: doctor + Verify-Install + Repair*.cmd/.ps1 + Install-DnsBlocker.ps1"
+echo "Staged tools: doctor + Verify-Install + Repair*.cmd/.ps1 + Recover-DnsBlocker.cmd + Install-DnsBlocker.ps1"
 # ensure logs placeholder
 : > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
 
@@ -166,11 +167,18 @@ by_dir["ApplicationProgramsFolder"].append(f'''      <Component Id="{shortcut_ci
 # Post-install: launch Setup GUI. Do NOT use FileKey CAs with wixl — Windows returns
 # MSI 2753 ("file not marked for installation") even when the File row exists.
 # Property + Type 50/242 ExeCommand is reliable after InstallFinalize.
+#
+# CRITICAL: schedule RemoveExistingProducts AFTER InstallFinalize.
+# wixl ignores MajorUpgrade/@Schedule and defaults to early REP (seq 1401). Early REP
+# uninstalls the old product before InstallFiles — if UI.exe is locked or msiexec is
+# aborted mid-flight, Start Menu shortcuts remain but DnsBlocker.UI.exe is gone and
+# reinstalling the SAME ProductCode MSI does nothing useful (maintenance mode).
 launch_setup_xml = f'''
     <!-- ui_exe_fid={ui_exe_fid} kept for layout gates; launch uses UIDIR property path -->
     <CustomAction Id="SetSetupAssistantPath" Property="SETUPASSISTANTEXE" Value="[UIDIR]DnsBlocker.UI.exe" />
     <CustomAction Id="LaunchSetupAssistant" Property="SETUPASSISTANTEXE" ExeCommand="/setup" Return="asyncNoWait" Impersonate="yes" />
     <InstallExecuteSequence>
+      <RemoveExistingProducts After="InstallFinalize" />
       <Custom Action="SetSetupAssistantPath" After="InstallFiles">NOT REMOVE="ALL"</Custom>
       <Custom Action="LaunchSetupAssistant" After="InstallFinalize">NOT REMOVE="ALL" AND UILevel &gt; 2</Custom>
     </InstallExecuteSequence>
@@ -207,10 +215,13 @@ wxs = f'''<?xml version="1.0" encoding="utf-8"?>
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
              Description="WinDNS Blocker hub (service + UI)" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
-                  AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize" />
+                  AllowSameVersionUpgrades="yes" Schedule="afterInstallFinalize" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <Icon Id="ProductIcon.ico" SourceFile="{xml_escape(str(icon_src))}" />
     <Property Id="ARPPRODUCTICON" Value="ProductIcon.ico" />
+    <!-- Same-ProductCode double-click / repair: force file replacement when REINSTALL is set by recovery tools -->
+    <Property Id="REINSTALLMODE" Value="vomus" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
     <Feature Id="ProductFeature" Title="WinDNS Blocker" Level="1">
 {feature_refs}
     </Feature>
@@ -325,6 +336,20 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
       exit 1
     fi
     echo "OK: LaunchSetupAssistant CA type=$CA_TYPE Source=$CA_SRC (not FileKey)"
+
+    # Gate: RemoveExistingProducts must be AFTER InstallFinalize (seq > 6600).
+    # Early REP (1401) + locked UI.exe = missing shortcut / half-installed product.
+    REP_SEQ=$(msiinfo export "$MSI" InstallExecuteSequence 2>/dev/null \
+      | awk -F'\t' '$1=="RemoveExistingProducts"{print $3}')
+    if [[ -z "$REP_SEQ" ]]; then
+      echo "FAIL: RemoveExistingProducts missing from InstallExecuteSequence" >&2
+      exit 1
+    fi
+    if [[ "$REP_SEQ" -le 6600 ]]; then
+      echo "FAIL: RemoveExistingProducts seq=$REP_SEQ is early (must be after InstallFinalize 6600)" >&2
+      exit 1
+    fi
+    echo "OK: RemoveExistingProducts seq=$REP_SEQ (after InstallFinalize)"
   fi
 
   if [[ -n "$UI_EXE" ]] && command -v wrestool >/dev/null 2>&1; then
@@ -346,7 +371,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "QRP sync must actually block — Succeeded ≠ Enabled (PR #19). Property CA Setup launch retained (type 242).",
+  "releaseNotes": "Heal broken upgrades: late RemoveExistingProducts, UI exits before msiexec, Recover-DnsBlocker.cmd. CA type 242 retained.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

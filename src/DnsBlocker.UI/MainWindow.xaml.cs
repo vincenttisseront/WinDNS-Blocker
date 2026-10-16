@@ -868,7 +868,7 @@ public partial class MainWindow : Window
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Information);
                 if (choice == MessageBoxResult.Yes)
-                    await InstallUpdateKeepingUiOpenAsync(result.Manifest).ConfigureAwait(true);
+                    await InstallUpdateExitingUiAsync(result.Manifest).ConfigureAwait(true);
                 else
                 {
                     UpdateStatusLine.Text = Loc.F("Main.Update.Later", result.Manifest.Version);
@@ -915,47 +915,44 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Runs InstallUpdate via IPC. Never closes/kills the UI when msiexec starts — show MessageBox instead.
-    /// Pipe breaks after msiexec (service stopped by MSI) are treated as a soft success warning.
+    /// Interactive update: download+verify in-process, launch elevated msiexec /qb, then exit the UI
+    /// so InstallFiles can replace DnsBlocker.UI.exe. Keeping the UI open during silent service msiexec
+    /// caused half-installed products (Start Menu shortcut → Missing Shortcut).
     /// </summary>
-    private async Task InstallUpdateKeepingUiOpenAsync(UpdateManifest manifest)
+    private async Task InstallUpdateExitingUiAsync(UpdateManifest manifest)
     {
         UpdateStatusLine.Text = Loc.T("Main.Update.Installing");
         _journal.Write(Loc.F("Main.Journal.InstallUpdate", manifest.Version));
         try
         {
-            var install = await _client.InstallUpdateAsync(manifest, silent: true).ConfigureAwait(true);
-            if (install.Started)
+            MessageBox.Show(
+                Loc.T("Main.Update.ClosingForUpgrade"),
+                Loc.T("Main.Update.Title"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            // Prefer UI-side elevated install (not silent IPC) so we control shutdown order.
+            var installer = new UpdateInstaller(waitForExit: false);
+            var install = await installer.InstallAsync(manifest, silent: false).ConfigureAwait(true);
+            if (!install.Started)
             {
-                UpdateStatusLine.Text = Loc.T("Main.Update.MsiexecStarted");
-                _journal.Write(Loc.T("Main.Journal.InstallStarted"));
-                MessageBox.Show(
-                    Loc.T("Main.Update.InstallStartedBox"),
-                    Loc.T("AppName"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                var err = install.Error ?? Loc.T("Main.Update.InstallFailUnknown");
+                UpdateStatusLine.Text = Loc.F("Main.Update.InstallFail", err);
+                _journal.Write(Loc.F("Main.Journal.InstallFail", err));
+                MessageBox.Show(err, Loc.T("Main.Update.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
-            var err = install.Error ?? Loc.T("Main.Update.InstallFailUnknown");
-            UpdateStatusLine.Text = Loc.F("Main.Update.InstallFail", err);
-            _journal.Write(Loc.F("Main.Journal.InstallFail", err));
-            MessageBox.Show(err, Loc.T("Main.Update.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        catch (Exception ex) when (IsLikelyMsiexecPipeDrop(ex))
-        {
-            // msiexec may have stopped the service before the IPC reply — UI must stay open.
             UpdateStatusLine.Text = Loc.T("Main.Update.MsiexecStarted");
-            _journal.Write(Loc.T("Main.Journal.InstallPipeDrop"));
-            MessageBox.Show(
-                Loc.T("Main.Update.InstallPipeDropBox"),
-                Loc.T("AppName"),
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            _journal.Write(Loc.T("Main.Journal.InstallStarted"));
+            // Exit immediately so file locks clear before msiexec InstallFiles.
+            Application.Current.Shutdown();
         }
         catch (Exception ex)
         {
             var msg = FormatUpdateFeedError(ex.Message);
+            if (string.IsNullOrWhiteSpace(msg))
+                msg = Loc.T("Main.Update.LaunchMsiexecFail");
             UpdateStatusLine.Text = Loc.F("Main.Update.InstallFail", msg);
             _journal.Write(Loc.F("Main.Journal.InstallFail", msg));
             MessageBox.Show(msg, Loc.T("Main.Update.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);

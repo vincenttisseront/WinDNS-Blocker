@@ -260,6 +260,12 @@ internal static class LocCatalog
         ["Main.Update.MsiexecStarted"] = ("Update: msiexec started (service may restart)", "Mise à jour : msiexec démarré (le service peut redémarrer)"),
         ["Main.Journal.InstallStarted"] = ("Update install — msiexec started", "Installation mise à jour — msiexec démarré"),
         ["Main.Update.InstallStartedBox"] = ("Installation started. The service may stop briefly during the MSI upgrade.", "Installation démarrée. Le service peut s'arrêter brièvement pendant la mise à niveau MSI."),
+        ["Main.Update.ClosingForUpgrade"] = (
+            "The updater will close this window so files can be replaced.\nApprove the UAC prompt, then reopen WinDNS Blocker from the Start Menu when setup finishes.",
+            "Le programme de mise à jour va fermer cette fenêtre pour remplacer les fichiers.\nApprouvez l'invite UAC, puis rouvrez WinDNS Blocker depuis le menu Démarrer une fois l'installation terminée."),
+        ["Main.Update.LaunchMsiexecFail"] = (
+            "Could not start the MSI installer. Download DnsBlocker-*.msi from GitHub Releases and run Recover-DnsBlocker.cmd as Administrator.",
+            "Impossible de démarrer l'installateur MSI. Téléchargez DnsBlocker-*.msi depuis GitHub Releases et exécutez Recover-DnsBlocker.cmd en tant qu'administrateur."),
         ["Main.Update.InstallFail"] = ("Update: failed — {0}", "Mise à jour : échec — {0}"),
         ["Main.Journal.InstallFail"] = ("Update install — failed: {0}", "Installation mise à jour — échec : {0}"),
         ["Main.Update.InstallFailUnknown"] = ("Installation failed.", "Échec de l'installation."),

@@ -181,7 +181,8 @@ public class UpdateCheckerTests
         Assert.Contains("/qn", launcher.LastArguments);
         Assert.Contains(result.MsiPath!, launcher.LastArguments);
         Assert.Contains("msiexec.exe", launcher.LastArguments);
-        // Silent path detaches via cmd start /b so service StopServices cannot kill msiexec.
+        Assert.Contains("taskkill", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        // Silent path: kill UI, delay, detach via cmd start /b so StopServices cannot kill msiexec.
         Assert.EndsWith("cmd.exe", launcher.LastFileName, StringComparison.OrdinalIgnoreCase);
     }
 

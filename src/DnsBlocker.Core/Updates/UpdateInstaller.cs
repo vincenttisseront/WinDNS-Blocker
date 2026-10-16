@@ -204,18 +204,26 @@ public sealed class UpdateInstaller
     }
 
     /// <summary>
-    /// Silent installs detach msiexec from the service process tree so StopServices cannot abort the upgrade.
-    /// Interactive installs use msiexec + UAC (runas).
+    /// Silent installs: kill UI (unlock files), delay, then detached msiexec so StopServices
+    /// cannot abort the upgrade mid-flight. Interactive: msiexec + UAC (runas); caller should exit UI.
     /// </summary>
     internal static ProcessStartInfo BuildMsiexecStartInfo(string msiPath, bool silent)
     {
+        // /norestart: never reboot. Quiet UI flags only differ.
+        var msiexecArgs = $"/i \"{msiPath}\" {(silent ? "/qn" : "/qb")} /norestart";
+
         if (silent)
         {
-            var msiexecArgs = $"/i \"{msiPath}\" /qn /norestart";
+            // taskkill unlocks DnsBlocker.UI.exe; ping delay lets handles release before InstallFiles.
+            // start /b detaches msiexec from the service process tree.
+            var cmd =
+                "taskkill /IM DnsBlocker.UI.exe /F >nul 2>&1 & " +
+                "ping -n 4 127.0.0.1 >nul & " +
+                "start \"DnsBlockerMsi\" /b msiexec.exe " + msiexecArgs;
             return new ProcessStartInfo
             {
                 FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                Arguments = $"/c start \"DnsBlockerMsi\" /b msiexec.exe {msiexecArgs}",
+                Arguments = "/c " + cmd,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
@@ -225,7 +233,7 @@ public sealed class UpdateInstaller
         return new ProcessStartInfo
         {
             FileName = "msiexec.exe",
-            Arguments = $"/i \"{msiPath}\" /qb /norestart",
+            Arguments = msiexecArgs,
             UseShellExecute = true,
             Verb = "runas",
             CreateNoWindow = false,
