@@ -63,7 +63,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = Get-DefaultVersion
 }
 
-$isWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+$runningOnWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
     [System.Runtime.InteropServices.OSPlatform]::Windows)
 
 Write-Host "WinDNS Blocker release build" -ForegroundColor Cyan
@@ -87,7 +87,7 @@ dotnet publish (Join-Path $repoRoot "src\DnsBlocker.Service\DnsBlocker.Service.c
 if ($LASTEXITCODE -ne 0) { throw "Service publish failed (exit $LASTEXITCODE)." }
 
 $uiPublished = $false
-if ($isWindows) {
+if ($runningOnWindows) {
     Write-Host "`nPublishing DnsBlocker.UI (win-x64)..." -ForegroundColor Cyan
     dotnet publish (Join-Path $repoRoot "src\DnsBlocker.UI\DnsBlocker.UI.csproj") `
         -o $uiOut @publishArgs
@@ -101,7 +101,7 @@ else {
 $msiPath = Join-Path $artifactsDir "DnsBlocker-$Version.msi"
 $msiBuilt = $false
 
-if (-not $isWindows) {
+if (-not $runningOnWindows) {
     Write-Host "`nSkipping MSI build: WiX MSI packaging requires Windows + WiX Toolset 5 SDK." -ForegroundColor Yellow
     Write-Host "  WiX project is ready at: installer/DnsBlocker.Installer.wixproj"
     Write-Host "  On Windows, re-run: .\scripts\build-release.ps1 -Version $Version"
