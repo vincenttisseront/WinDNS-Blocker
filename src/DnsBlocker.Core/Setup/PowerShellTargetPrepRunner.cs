@@ -41,12 +41,15 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
         // when passwords contain quotes, $, backticks, etc.
         var script = """
             $ErrorActionPreference = 'Stop'
-            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            $OutputEncoding = $utf8
+            [Console]::OutputEncoding = $utf8
             $log = New-Object System.Collections.Generic.List[string]
             function Emit($ok, $message) {
               $obj = [ordered]@{ ok = [bool]$ok; message = [string]$message; log = @($log) }
               $json = $obj | ConvertTo-Json -Compress -Depth 6
-              [Console]::Out.WriteLine($json)
+              $bytes = $utf8.GetBytes($json + [Environment]::NewLine)
+              [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)
             }
             try {
               $user = $env:DNSBLOCKER_WINRM_USER
@@ -111,7 +114,9 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
 
         var script = $$"""
             $ErrorActionPreference = 'Stop'
-            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            $OutputEncoding = $utf8
+            [Console]::OutputEncoding = $utf8
             $log = New-Object System.Collections.Generic.List[string]
             $requestedIdentity = '{{Escape(identity)}}'
             $addDnsAdmins = {{addDnsAdmins}}
@@ -124,7 +129,9 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
                 hubIdentity = $hubIdentity
                 addedToDnsAdmins = [bool]$added
               }
-              [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress -Depth 8))
+              $json = $obj | ConvertTo-Json -Compress -Depth 8
+              $bytes = $utf8.GetBytes($json + [Environment]::NewLine)
+              [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)
             }
 
             function Resolve-HubIdentity([string]$Requested) {
@@ -163,8 +170,8 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
               $null = Test-WSMan -ComputerName $target -Authentication Negotiate -Credential $cred -ErrorAction Stop
               [void]$log.Add('WinRM OK')
 
-              $hubIdentity = Resolve-HubIdentity -Requested $requestedIdentity
-              [void]$log.Add('Identité à autoriser: ' + $hubIdentity)
+              $hubIdentity = [string](Resolve-HubIdentity -Requested $requestedIdentity)
+              [void]$log.Add('Identite a autoriser: ' + $hubIdentity)
 
               # Single-hop Invoke-Command with explicit -Credential (no CredSSP required).
               $remote = Invoke-Command -ComputerName $target -Credential $cred -Authentication Negotiate -ScriptBlock {
@@ -178,19 +185,21 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
                 $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server'
                 if (-not (Test-Path $regPath)) {
                   New-Item -Path $regPath -Force | Out-Null
-                  [void]$steps.Add('Clé registre DNS Server créée')
+                  [void]$steps.Add('Cle registre DNS Server creee')
                 }
 
+                # PS 5.1: never use enum -bor (can become Object[] and throw op_BitwiseOr).
+                # Prefer string overload of RegistryAccessRule (stable on Server 2016/2019/2022).
+                $identity = [string]$HubIdentity
+                $rights = [System.Security.AccessControl.RegistryRights]::FullControl
+                $inherit = [System.Security.AccessControl.InheritanceFlags]([int]1 -bor [int]2) # ContainerInherit|ObjectInherit
+                $propagate = [System.Security.AccessControl.PropagationFlags]::None
+                $allow = [System.Security.AccessControl.AccessControlType]::Allow
                 $acl = Get-Acl -Path $regPath
-                $rule = New-Object System.Security.AccessControl.RegistryAccessRule(
-                  $HubIdentity,
-                  [System.Security.AccessControl.RegistryRights]::FullControl,
-                  [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
-                  [System.Security.AccessControl.PropagationFlags]::None,
-                  [System.Security.AccessControl.AccessControlType]::Allow)
+                $rule = New-Object System.Security.AccessControl.RegistryAccessRule ($identity, $rights, $inherit, $propagate, $allow)
                 $acl.AddAccessRule($rule)
                 Set-Acl -Path $regPath -AclObject $acl
-                [void]$steps.Add('ACL Full Control accordée à ' + $HubIdentity)
+                [void]$steps.Add('ACL Full Control accordee a ' + $identity)
 
                 if ($DoDnsAdmins) {
                   try {
@@ -212,7 +221,7 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
               } -ArgumentList $hubIdentity, $addDnsAdmins
 
               foreach ($s in @($remote.steps)) { [void]$log.Add([string]$s) }
-              Emit $true 'Cible préparée. Sync QRP peut utiliser le compte du service hub.' ([string]$remote.hubIdentity) ([bool]$addDnsAdmins)
+              Emit $true 'Cible preparee. Sync QRP peut utiliser le compte du service hub.' ([string]$remote.hubIdentity) ([bool]$addDnsAdmins)
               exit 0
             } catch {
               $msg = $_.Exception.Message
@@ -369,7 +378,9 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
         var tempDir = Path.Combine(Path.GetTempPath(), "DnsBlocker");
         Directory.CreateDirectory(tempDir);
         var scriptPath = Path.Combine(tempDir, "winrm-" + Guid.NewGuid().ToString("N") + ".ps1");
-        await File.WriteAllTextAsync(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken)
+        // Windows PowerShell 5.1 requires UTF-8 BOM to parse non-ASCII in -File scripts;
+        // without BOM, accents become mojibake (e.g. IdentitÃ©) before JSON is emitted.
+        await File.WriteAllTextAsync(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), cancellationToken)
             .ConfigureAwait(false);
 
         try
