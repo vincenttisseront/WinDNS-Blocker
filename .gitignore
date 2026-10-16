@@ -11,3 +11,4 @@ artifacts/
 .dnsblocker/
 installer/obj/
 installer/bin/
+tools/
