@@ -125,11 +125,9 @@ internal static class InstallRepair
         IProgress<string>? progress,
         CancellationToken ct)
     {
-        // Prefer version.json from the same major feed we ship
+        // Prefer stable latest feed so repair always pulls the newest published MSI
         var version = AppVersion.Current;
-        var feedUrl =
-            "https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/v" + version +
-            "/version.json";
+        var feedUrl = UpdateFeedUrls.DefaultPublicFeedUrl;
         string? msiUrl = null;
         string? sha = null;
 
@@ -149,8 +147,7 @@ internal static class InstallRepair
             // fall through to constructed URL
         }
 
-        msiUrl ??= "https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/v" + version +
-                   "/DnsBlocker-" + version + ".msi";
+        msiUrl ??= UpdateFeedUrls.TagMsiUrl(version);
 
         var dest = Path.Combine(Path.GetTempPath(), "DnsBlocker-" + version + ".msi");
         progress?.Report("Téléchargement : " + msiUrl);

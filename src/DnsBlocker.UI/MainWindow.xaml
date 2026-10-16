@@ -172,6 +172,8 @@
                 <TextBlock Text="Mises à jour de l'application" FontWeight="SemiBold" Margin="0,0,0,8"/>
                 <TextBlock Text="URL du flux version.json" Foreground="{StaticResource MutedBrush}"/>
                 <TextBox x:Name="UpdateFeedUrlBox"/>
+                <TextBlock Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,0,0"
+                           Text="Par défaut : GitHub Releases latest (…/releases/latest/download/version.json). Effacez le champ pour désactiver les vérifications."/>
                 <CheckBox x:Name="CheckUpdatesOnStartupBox" Content="Vérifier les mises à jour au démarrage" Margin="0,8,0,4"/>
                 <CheckBox x:Name="AutoInstallUpdatesBox" Content="Installer automatiquement (service silencieux msiexec /qn)" Margin="0,0,0,4"/>
                 <TextBlock Text="Sans installation auto, seule une notification est affichée. L'installation depuis l'UI passe par le service (déjà élevé) ; un installateur local utiliserait UAC (runas)."

@@ -17,8 +17,10 @@
   Product version (SemVer-ish). Defaults to Directory.Build.props <Version> or 1.0.0.
 
 .PARAMETER UpdateFeedBaseUrl
-  Base URL for msiUrl in version.json (e.g. https://example.com/releases).
+  Base URL for msiUrl in version.json (GitHub Releases tag download folder by default).
   Final URL: {UpdateFeedBaseUrl}/DnsBlocker-{Version}.msi
+  Clients should point UpdateFeedUrl at the stable latest feed:
+  https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json
 
 .PARAMETER SelfContained
   When set, publish self-contained win-x64 instead of framework-dependent.
@@ -32,7 +34,7 @@
 [CmdletBinding()]
 param(
     [string]$Version = "",
-    [string]$UpdateFeedBaseUrl = "https://example.com/releases",
+    [string]$UpdateFeedBaseUrl = "",
     [switch]$SelfContained,
     [string]$Configuration = "Release",
     [string]$ReleaseNotes = ""
@@ -61,6 +63,10 @@ function Get-DefaultVersion {
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = Get-DefaultVersion
+}
+
+if ([string]::IsNullOrWhiteSpace($UpdateFeedBaseUrl)) {
+    $UpdateFeedBaseUrl = "https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/v$Version"
 }
 
 $runningOnWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(

@@ -650,6 +650,16 @@ public partial class MainWindow : Window
                     _journal.Write("Mise à jour reportée par l'utilisateur");
                 }
             }
+            else if (result.FeedError)
+            {
+                var msg = FormatUpdateFeedError(result.Message);
+                UpdateStatusLine.Text = "Mise à jour : " + msg;
+                _journal.Write("Vérifier mises à jour — erreur flux : " + msg);
+                if (!quietIfCurrent)
+                {
+                    MessageBox.Show(msg, "Erreur mise à jour", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
             else
             {
                 UpdateStatusLine.Text = result.Message ?? $"À jour ({result.CurrentVersion})";
@@ -666,10 +676,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            UpdateStatusLine.Text = "Mise à jour : " + ex.Message;
-            _journal.Write("Vérifier mises à jour — erreur : " + ex.Message);
+            var msg = FormatUpdateFeedError(ex.Message);
+            UpdateStatusLine.Text = "Mise à jour : " + msg;
+            _journal.Write("Vérifier mises à jour — erreur : " + msg);
             if (!quietIfCurrent)
-                MessageBox.Show(ex.Message, "Erreur mise à jour", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(msg, "Erreur mise à jour", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -743,5 +754,35 @@ public partial class MainWindow : Window
             VerifyPoliciesButton.IsEnabled = enabled;
         if (LoadStatsButton is not null)
             LoadStatsButton.IsEnabled = enabled;
+    }
+
+    /// <summary>
+    /// Prefer French guidance over raw HttpRequestException text
+    /// ("Response status code does not indicate success: 404…").
+    /// </summary>
+    private static string FormatUpdateFeedError(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return "Impossible de vérifier les mises à jour. Vérifiez l'URL du flux version.json "
+                   + $"({UpdateFeedUrls.DefaultPublicFeedUrl}).";
+        }
+
+        if (raw.Contains("404", StringComparison.Ordinal)
+            || raw.Contains("Not Found", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("introuvable", StringComparison.OrdinalIgnoreCase))
+        {
+            // Already friendly from UpdateChecker — keep as-is; otherwise rewrite raw HttpRequestException.
+            if (raw.Contains("version.json", StringComparison.OrdinalIgnoreCase)
+                || raw.Contains("flux", StringComparison.OrdinalIgnoreCase)
+                || raw.Contains("feed", StringComparison.OrdinalIgnoreCase))
+                return raw;
+
+            return "Flux de mise à jour introuvable (404). "
+                   + "Vérifiez l'URL version.json dans Configuration — "
+                   + $"recommandé : {UpdateFeedUrls.DefaultPublicFeedUrl}.";
+        }
+
+        return raw;
     }
 }
