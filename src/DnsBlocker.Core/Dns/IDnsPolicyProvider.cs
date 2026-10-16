@@ -16,4 +16,12 @@ public interface IDnsPolicyProvider
         string computerName,
         string policyNamePrefix,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Live inventory via Get-DnsServerQueryResolutionPolicy (name, IsEnabled, Action).
+    /// </summary>
+    Task<IReadOnlyList<DnsPolicyInfo>> ListPoliciesAsync(
+        string computerName,
+        string policyNamePrefix,
+        CancellationToken cancellationToken = default);
 }
