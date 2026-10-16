@@ -120,6 +120,13 @@ else {
     $uiPublishDir = $uiOut.TrimEnd('\') + '\'
 
     $toolsDir = (Join-Path $repoRoot "scripts").TrimEnd('\') + '\'
+    foreach ($tool in @('doctor.ps1', 'Verify-Install.cmd')) {
+        $toolPath = Join-Path $toolsDir $tool
+        if (-not (Test-Path -LiteralPath $toolPath)) {
+            throw "Required installer tool missing: $toolPath (ToolsDir must include doctor.ps1 and Verify-Install.cmd)"
+        }
+    }
+    Write-Host "ToolsDir OK: doctor.ps1 + Verify-Install.cmd"
 
     dotnet build $installerProj `
         -c $Configuration `

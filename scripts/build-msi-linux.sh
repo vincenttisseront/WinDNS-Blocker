@@ -55,9 +55,19 @@ find "$STAGE/DnsBlocker" -name '*.pdb' -delete
 find "$UI_OUT" -maxdepth 1 -type f ! -name '*.pdb' -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
 find "$UI_OUT" -mindepth 1 -maxdepth 1 -type d -exec cp -a {} "$STAGE/DnsBlocker/UI/" \;
 find "$STAGE/DnsBlocker/UI" -name '*.pdb' -delete
-# Post-install tools
-cp -a "$ROOT/scripts/doctor.ps1" "$STAGE/DnsBlocker/doctor.ps1"
-cp -a "$ROOT/scripts/Verify-Install.cmd" "$STAGE/DnsBlocker/Verify-Install.cmd"
+# Post-install tools (REQUIRED — v1.0.3 logo MSI omitted these; never skip)
+for tool in doctor.ps1 Verify-Install.cmd; do
+  if [[ ! -f "$ROOT/scripts/$tool" ]]; then
+    echo "FAIL: missing required tool scripts/$tool" >&2
+    exit 1
+  fi
+  cp -a "$ROOT/scripts/$tool" "$STAGE/DnsBlocker/$tool"
+done
+if [[ ! -f "$STAGE/DnsBlocker/doctor.ps1" ]] || [[ ! -f "$STAGE/DnsBlocker/Verify-Install.cmd" ]]; then
+  echo "FAIL: tools not staged under $STAGE/DnsBlocker" >&2
+  exit 1
+fi
+echo "Staged tools: doctor.ps1 + Verify-Install.cmd"
 # ensure logs placeholder
 : > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
 
@@ -219,6 +229,19 @@ fi
 TMP_EXTRACT=$(mktemp -d)
 trap 'rm -rf "$TMP_EXTRACT"' EXIT
 if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
+  DOCTOR=$(find "$TMP_EXTRACT" -iname 'doctor.ps1' | head -1 || true)
+  VERIFY=$(find "$TMP_EXTRACT" -iname 'Verify-Install.cmd' | head -1 || true)
+  if [[ -z "$DOCTOR" ]]; then
+    echo "FAIL: MSI is missing doctor.ps1 (would install without C:\\Program Files\\DnsBlocker\\doctor.ps1)" >&2
+    exit 1
+  fi
+  if [[ -z "$VERIFY" ]]; then
+    echo "FAIL: MSI is missing Verify-Install.cmd" >&2
+    exit 1
+  fi
+  echo "OK: MSI contains $DOCTOR"
+  echo "OK: MSI contains $VERIFY"
+
   UI_EXE=$(find "$TMP_EXTRACT" -iname 'DnsBlocker.UI.exe' | head -1 || true)
   if [[ -n "$UI_EXE" ]] && command -v wrestool >/dev/null 2>&1; then
     wrestool -l "$UI_EXE" | grep -Eq 'group_icon|--type=14' \
@@ -226,6 +249,9 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
       || { echo "FAIL: extracted UI exe missing group_icon"; exit 1; }
   fi
   find "$TMP_EXTRACT" -iname 'DnsBlocker.ico' | head -3 || true
+else
+  echo "FAIL: msiextract could not open $MSI" >&2
+  exit 1
 fi
 
 SHA=$(sha256sum "$MSI" | awk '{print $1}')
