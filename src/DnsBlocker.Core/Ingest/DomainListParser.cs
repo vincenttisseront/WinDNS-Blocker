@@ -47,7 +47,8 @@ public static partial class DomainListParser
     }
 
     /// <summary>
-    /// Parses hosts-format or plain domain lists into normalized FQDNs (no trailing dot).
+    /// Parses hosts-format, plain domain, OISD domainswild (*.apex), or ABP (||apex^) lists
+    /// into normalized FQDNs (no trailing dot). Leading <c>*.</c> is preserved for Windows DNS QRP.
     /// </summary>
     public static IReadOnlyCollection<string> ParseDomains(string content)
     {
@@ -55,7 +56,9 @@ public static partial class DomainListParser
         foreach (var raw in content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             var line = raw.Trim();
-            if (line.Length == 0 || line.StartsWith('#'))
+            if (line.Length == 0 || line.StartsWith('#') || line.StartsWith('!'))
+                continue;
+            if (line.StartsWith('[') && line.EndsWith(']'))
                 continue;
 
             var hash = line.IndexOf('#');
@@ -73,8 +76,24 @@ public static partial class DomainListParser
             else
                 candidate = parts[0];
 
+            // Adblock Plus / uBlock: ||example.com^ or ||example.com^$third-party
+            if (candidate.StartsWith("||", StringComparison.Ordinal))
+            {
+                candidate = candidate[2..];
+                var caret = candidate.IndexOf('^');
+                if (caret >= 0)
+                    candidate = candidate[..caret];
+            }
+
+            var wildcard = false;
+            if (candidate.StartsWith("*.", StringComparison.Ordinal))
+            {
+                wildcard = true;
+                candidate = candidate[2..];
+            }
+
             if (TryNormalizeDomain(candidate, out var domain))
-                domains.Add(domain);
+                domains.Add(wildcard ? "*." + domain : domain);
         }
 
         return domains;

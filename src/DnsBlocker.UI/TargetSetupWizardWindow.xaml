@@ -1,0 +1,87 @@
+<Window x:Class="DnsBlocker.UI.TargetSetupWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Assistant cible DNS — WinRM / QRP"
+        Height="640" Width="760"
+        MinHeight="520" MinWidth="680"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgBrush}"
+        FontFamily="Segoe UI"
+        FontSize="13">
+  <DockPanel Margin="20">
+    <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}"
+            BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,16">
+      <StackPanel>
+        <TextBlock Text="Préparer un serveur DNS distant" FontSize="20" FontWeight="SemiBold"/>
+        <TextBlock x:Name="StepTitle" Margin="0,6,0,0" FontWeight="SemiBold" Foreground="#0B6E4F"/>
+        <TextBlock x:Name="StepSubtitle" Margin="0,4,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+        <ProgressBar x:Name="BusyBar" Height="6" Margin="0,12,0,0" IsIndeterminate="True" Visibility="Collapsed"/>
+      </StackPanel>
+    </Border>
+
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+      <Button x:Name="BackButton" Content="Précédent" Click="Back_Click" Margin="0,0,8,0"/>
+      <Button x:Name="NextButton" Content="Suivant" Click="Next_Click" FontWeight="SemiBold"/>
+    </StackPanel>
+
+    <Grid>
+      <!-- 0 Host -->
+      <StackPanel x:Name="StepHost" Visibility="Visible">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Indiquez le hostname / FQDN du serveur DNS Windows (ex. windc05.ar-systems.fr)."/>
+        <TextBlock x:Name="DomainHint" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+        <TextBlock Text="Serveur DNS" Foreground="{StaticResource MutedBrush}"/>
+        <TextBox x:Name="HostnameBox"/>
+        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                   Text="Après préparation, la sync QRP utilisera le compte du service hub (plus besoin de retoucher le registre à la main)."/>
+      </StackPanel>
+
+      <!-- 1 Credentials -->
+      <StackPanel x:Name="StepCreds" Visibility="Collapsed">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Compte administrateur du serveur DNS (ou Domain Admin) pour WinRM. Format recommandé : DOMAINE\utilisateur."/>
+        <TextBlock Text="Compte" Foreground="{StaticResource MutedBrush}"/>
+        <TextBox x:Name="UsernameBox"/>
+        <TextBlock Text="Mot de passe" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,0"/>
+        <PasswordBox x:Name="PasswordBox" Padding="8,6" Margin="0,0,0,8"/>
+        <CheckBox x:Name="PersistCredsBox" Content="Mémoriser le compte (DPAPI LocalMachine sous ProgramData\DnsBlocker\secrets)" IsChecked="True" Margin="0,4,0,4"/>
+        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                   Text="Le mot de passe n'est jamais écrit dans les journaux. Transmission unique via le named pipe local vers le service."/>
+      </StackPanel>
+
+      <!-- 2 Test + options -->
+      <StackPanel x:Name="StepTest" Visibility="Collapsed">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Testez WinRM/CIM, puis choisissez les options de préparation distante."/>
+        <TextBlock Text="Identité hub à autoriser (vide = auto : compte du service DnsBlocker ou DnsAdmins)"
+                   Foreground="{StaticResource MutedBrush}"/>
+        <TextBox x:Name="HubIdentityBox"/>
+        <CheckBox x:Name="AddDnsAdminsBox" Margin="0,8,0,8"
+                  Content="Ajouter aussi cette identité au groupe DnsAdmins (risque AD — documenté)"/>
+        <Button x:Name="TestWinRmButton" Content="Tester WinRM / CIM" Click="TestWinRm_Click" HorizontalAlignment="Left" Margin="0,0,0,8"/>
+        <TextBlock x:Name="TestStatus" TextWrapping="Wrap" FontWeight="SemiBold"/>
+        <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1"
+                CornerRadius="6" Padding="10" Margin="0,8,0,0" MaxHeight="180">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="ActionLogBox" FontFamily="Consolas" TextWrapping="Wrap"/>
+          </ScrollViewer>
+        </Border>
+      </StackPanel>
+
+      <!-- 3 Apply + confirm -->
+      <StackPanel x:Name="StepApply" Visibility="Collapsed">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Étapes distantes : ACL registre DNS Server (Full Control) → probe Add/Remove QRP. Cliquez Préparer."/>
+        <Button x:Name="PrepareButton" Content="Préparer la cible" Click="Prepare_Click" HorizontalAlignment="Left" FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <TextBlock x:Name="PrepareStatus" TextWrapping="Wrap" FontWeight="SemiBold"/>
+        <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1"
+                CornerRadius="6" Padding="10" Margin="0,8,0,0" MaxHeight="220">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="PrepareLogBox" FontFamily="Consolas" TextWrapping="Wrap"/>
+          </ScrollViewer>
+        </Border>
+        <CheckBox x:Name="AddToFarmBox" Content="Ajouter automatiquement à la farm DNS (DnsTargets)" IsChecked="True" Margin="0,12,0,0"/>
+      </StackPanel>
+    </Grid>
+  </DockPanel>
+</Window>

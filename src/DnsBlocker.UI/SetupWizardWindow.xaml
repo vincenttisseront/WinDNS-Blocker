@@ -1,0 +1,93 @@
+<Window x:Class="DnsBlocker.UI.SetupWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Assistant de configuration — WinDNS Blocker"
+        Height="560" Width="720"
+        MinHeight="480" MinWidth="640"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgBrush}"
+        FontFamily="Segoe UI"
+        FontSize="13">
+  <DockPanel Margin="20">
+    <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}"
+            BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,16">
+      <StackPanel>
+        <TextBlock Text="Configuration initiale" FontSize="20" FontWeight="SemiBold"/>
+        <TextBlock x:Name="StepTitle" Margin="0,6,0,0" FontWeight="SemiBold" Foreground="#0B6E4F"/>
+        <TextBlock x:Name="StepSubtitle" Margin="0,4,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+        <ProgressBar x:Name="BusyBar" Height="6" Margin="0,12,0,0" IsIndeterminate="True" Visibility="Collapsed"/>
+      </StackPanel>
+    </Border>
+
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+      <Button x:Name="BackButton" Content="Précédent" Click="Back_Click" Margin="0,0,8,0"/>
+      <Button x:Name="SkipButton" Content="Passer" Click="Skip_Click" Margin="0,0,8,0"/>
+      <Button x:Name="NextButton" Content="Suivant" Click="Next_Click" FontWeight="SemiBold"/>
+    </StackPanel>
+
+    <!-- Step panels -->
+    <Grid>
+      <!-- 0 Welcome -->
+      <StackPanel x:Name="StepWelcome" Visibility="Visible">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
+                   Text="Bienvenue. Cet assistant configure le hub (cibles DNS, listes, mises à jour) sans PowerShell."/>
+        <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="12">
+          <StackPanel>
+            <TextBlock x:Name="WelcomeServiceStatus" FontWeight="SemiBold"/>
+            <TextBlock x:Name="WelcomeDomainStatus" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}"/>
+            <StackPanel x:Name="RepairPanel" Margin="0,12,0,0" Visibility="Collapsed">
+              <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                         Text="Installation incomplète ou service indisponible. Utilisez la réparation guidée (pas de ligne de commande)."/>
+              <Button x:Name="RepairButton" Content="Réparer l'installation" Click="Repair_Click" HorizontalAlignment="Left"/>
+              <TextBlock x:Name="RepairHint" Margin="0,6,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- 1 Targets -->
+      <StackPanel x:Name="StepTargets" Visibility="Collapsed">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Indiquez les serveurs DNS Windows qui recevront les politiques QRP (un FQDN ou hostname par ligne)."/>
+        <TextBlock x:Name="TargetsDomainHint" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+        <TextBox x:Name="TargetsBox" AcceptsReturn="True" Height="160" VerticalScrollBarVisibility="Auto"
+                 TextWrapping="NoWrap" FontFamily="Consolas"/>
+      </StackPanel>
+
+      <!-- 2 Lists -->
+      <StackPanel x:Name="StepLists" Visibility="Collapsed">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="URLs des listes Steve Jenkins (liste de listes). Les valeurs par défaut conviennent dans la plupart des cas."/>
+        <TextBlock Text="Blocklists (LoL)" Foreground="{StaticResource MutedBrush}"/>
+        <TextBox x:Name="BlocklistsUrlBox"/>
+        <TextBlock Text="Whitelists (LoL)" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,0"/>
+        <TextBox x:Name="WhitelistsUrlBox"/>
+        <TextBlock Text="Action QRP" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,0"/>
+        <ComboBox x:Name="ActionBox" Width="160" HorizontalAlignment="Left">
+          <ComboBoxItem Content="DENY" IsSelected="True"/>
+          <ComboBoxItem Content="IGNORE"/>
+        </ComboBox>
+      </StackPanel>
+
+      <!-- 3 Updates -->
+      <StackPanel x:Name="StepUpdates" Visibility="Collapsed">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="Flux de mise à jour (version.json). Prérempli avec le flux GitHub public « latest ». Effacez pour désactiver."/>
+        <TextBlock Text="URL version.json" Foreground="{StaticResource MutedBrush}"/>
+        <TextBox x:Name="UpdateFeedUrlBox"/>
+        <CheckBox x:Name="CheckUpdatesOnStartupBox" Content="Vérifier les mises à jour au démarrage" Margin="0,12,0,4" IsChecked="True"/>
+        <TextBlock Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"
+                   Text="URL stable : https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json"/>
+      </StackPanel>
+
+      <!-- 4 Confirm -->
+      <StackPanel x:Name="StepConfirm" Visibility="Collapsed">
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Text="Vérifiez le récapitulatif, puis enregistrez. Vous pourrez synchroniser tout de suite."/>
+        <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="12">
+          <TextBlock x:Name="ConfirmSummary" TextWrapping="Wrap" FontFamily="Consolas"/>
+        </Border>
+        <CheckBox x:Name="ApplyNowBox" Content="Lancer une synchronisation maintenant (Apply)" Margin="0,12,0,0" IsChecked="True"/>
+      </StackPanel>
+    </Grid>
+  </DockPanel>
+</Window>
