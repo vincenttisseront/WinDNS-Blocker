@@ -188,17 +188,18 @@ wxs = f'''<?xml version="1.0" encoding="utf-8"?>
 {feature_refs}
     </Feature>
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFiles64Folder">
+      <!-- Explicit Name avoids wixl emitting DefaultDir='.' which can break Program Files resolution -->
+      <Directory Id="ProgramFiles64Folder" Name="ProgramFiles64">
         <Directory Id="INSTALLDIR" Name="DnsBlocker">
 {render_dirs(Path("."), 10)}
         </Directory>
       </Directory>
-      <Directory Id="CommonAppDataFolder">
+      <Directory Id="CommonAppDataFolder" Name="CommonAppData">
         <Directory Id="APPDATAROOT" Name="DnsBlocker">
           <Directory Id="LOGSDIR" Name="logs" />
         </Directory>
       </Directory>
-      <Directory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuFolder" Name="ProgramMenu">
         <Directory Id="ApplicationProgramsFolder" Name="WinDNS Blocker" />
       </Directory>
     </Directory>

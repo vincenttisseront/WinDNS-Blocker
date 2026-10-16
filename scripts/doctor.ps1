@@ -6,12 +6,12 @@
   Verifies binaries, ProgramData, Windows service state, named-pipe reachability,
   and prints actionable fixes. Exit 0 = healthy, 1 = problems found.
 
-  Written for Windows PowerShell 5.1 (avoid nested $() with commas inside
-  double-quoted arguments, and avoid unescaped '>' redirection tokens).
+  Written for Windows PowerShell 5.1 (string concatenation only; no bare '>').
+  Uses SIDs for icacls so French/localized BUILTIN names work.
 #>
 [CmdletBinding()]
 param(
-    [string]$InstallRoot = 'C:\Program Files\DnsBlocker',
+    [string]$InstallRoot = '',
     [string]$ServiceName = 'DnsBlocker',
     [string]$PipeName = 'DnsBlocker',
     [switch]$StartServiceIfStopped
@@ -38,9 +38,91 @@ function Write-Warn {
     [void]$script:warned.Add($Message)
 }
 
+function Get-InstallRootFromRegistry {
+    $roots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    foreach ($root in $roots) {
+        $apps = Get-ItemProperty -Path $root -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like 'WinDNS Blocker*' }
+        foreach ($app in $apps) {
+            if ($app.InstallLocation -and (Test-Path -LiteralPath $app.InstallLocation)) {
+                return $app.InstallLocation.TrimEnd('\')
+            }
+            if ($app.DisplayIcon) {
+                $dir = Split-Path -Parent ([string]$app.DisplayIcon)
+                if ($dir -and (Test-Path -LiteralPath $dir)) {
+                    return $dir.TrimEnd('\')
+                }
+            }
+        }
+    }
+    return $null
+}
+
+# Resolve install root: explicit param > registry > well-known paths
+$candidates = New-Object System.Collections.Generic.List[string]
+if (-not [string]::IsNullOrWhiteSpace($InstallRoot)) {
+    [void]$candidates.Add($InstallRoot.TrimEnd('\'))
+}
+$regRoot = Get-InstallRootFromRegistry
+if ($regRoot) { [void]$candidates.Add($regRoot) }
+if ($env:ProgramFiles) {
+    [void]$candidates.Add((Join-Path $env:ProgramFiles 'DnsBlocker'))
+}
+$pf86 = ${env:ProgramFiles(x86)}
+if ($pf86) {
+    [void]$candidates.Add((Join-Path $pf86 'DnsBlocker'))
+}
+# Also try literal classic path
+[void]$candidates.Add('C:\Program Files\DnsBlocker')
+[void]$candidates.Add('C:\Program Files (x86)\DnsBlocker')
+
+$resolved = $null
+foreach ($c in $candidates) {
+    if ([string]::IsNullOrWhiteSpace($c)) { continue }
+    $svcProbe = Join-Path $c 'DnsBlocker.Service.exe'
+    if (Test-Path -LiteralPath $svcProbe) {
+        $resolved = $c
+        break
+    }
+}
+if (-not $resolved) {
+    foreach ($c in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+        if (Test-Path -LiteralPath $c) {
+            $resolved = $c
+            break
+        }
+    }
+}
+if (-not $resolved) {
+    $resolved = 'C:\Program Files\DnsBlocker'
+}
+
+$InstallRoot = $resolved
+
 Write-Host 'WinDNS Blocker doctor' -ForegroundColor Cyan
 Write-Host ('InstallRoot: ' + $InstallRoot)
+Write-Host ('PowerShell: ' + $PSVersionTable.PSVersion.ToString() + ' | 64-bit process: ' + [Environment]::Is64BitProcess)
 Write-Host ''
+
+# Show what is actually present
+if (Test-Path -LiteralPath $InstallRoot) {
+    $entries = @(Get-ChildItem -LiteralPath $InstallRoot -Force -ErrorAction SilentlyContinue | Select-Object -First 25)
+    Write-Host ('Contents of InstallRoot (' + $entries.Count + ' entries shown):')
+    foreach ($e in $entries) {
+        Write-Host ('  ' + $e.Name)
+    }
+    if ($entries.Count -eq 0) {
+        Write-Warn 'InstallRoot exists but is empty.'
+    }
+    Write-Host ''
+}
+else {
+    Write-Bad ('InstallRoot does not exist: ' + $InstallRoot)
+}
 
 # --- Binaries ---
 $svcExe = Join-Path $InstallRoot 'DnsBlocker.Service.exe'
@@ -50,7 +132,10 @@ if (Test-Path -LiteralPath $svcExe) {
     Write-Ok ('Service binary: ' + $svcExe)
 }
 else {
-    Write-Bad ('Missing service binary: ' + $svcExe + ' (reinstall MSI or run install.ps1)')
+    Write-Bad ('Missing service binary: ' + $svcExe)
+    Write-Bad 'The MSI did not lay down DnsBlocker.Service.exe. Reinstall with logging:'
+    Write-Bad '  msiexec /i DnsBlocker-1.0.5.msi /l*v %TEMP%\dnsblocker-install.log'
+    Write-Bad 'Then open the log and search for InstallFiles / return value 3.'
 }
 
 if (Test-Path -LiteralPath $uiExe) {
@@ -67,18 +152,23 @@ if ((Test-Path -LiteralPath $hostFxr) -or (Test-Path -LiteralPath $coreClr)) {
     Write-Ok 'Looks self-contained (runtime shipped with install) - no separate .NET 8 install required for the service.'
 }
 else {
-    Write-Warn 'No bundled runtime DLLs found. Framework-dependent install needs .NET 8 Runtime (and Desktop Runtime for the UI).'
-    $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
-    if ($null -ne $dotnet) {
-        Write-Ok ('dotnet on PATH: ' + $dotnet.Source)
+    if (-not (Test-Path -LiteralPath $svcExe)) {
+        Write-Warn 'No runtime DLLs and no service EXE - treat as incomplete MSI install (not framework-dependent).'
     }
     else {
-        Write-Bad 'dotnet not on PATH. Install .NET 8 Runtime from https://dotnet.microsoft.com/download/dotnet/8.0'
+        Write-Warn 'No bundled runtime DLLs found. Framework-dependent install needs .NET 8 Runtime (and Desktop Runtime for the UI).'
+        $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+        if ($null -ne $dotnet) {
+            Write-Ok ('dotnet on PATH: ' + $dotnet.Source)
+        }
+        else {
+            Write-Bad 'dotnet not on PATH. Install .NET 8 Runtime from https://dotnet.microsoft.com/download/dotnet/8.0'
+        }
     }
 }
 
 # --- ProgramData ---
-$data = 'C:\ProgramData\DnsBlocker'
+$data = Join-Path $env:ProgramData 'DnsBlocker'
 $logs = Join-Path $data 'logs'
 foreach ($dir in @($data, $logs)) {
     if (Test-Path -LiteralPath $dir) {
@@ -95,10 +185,10 @@ foreach ($dir in @($data, $logs)) {
     }
 }
 
-# ACL: SYSTEM + Admins full; Users read/execute (UI may read logs)
+# ACL via SIDs (works on FR/EN): SYSTEM, Administrators, Users
 try {
-    & icacls.exe $data /grant 'NT AUTHORITY\SYSTEM:(OI)(CI)F' 'BUILTIN\Administrators:(OI)(CI)F' 'BUILTIN\Users:(OI)(CI)RX' | Out-Null
-    Write-Ok ('ACL refreshed on ' + $data + ' (SYSTEM/Administrators Full, Users RX)')
+    & icacls.exe $data /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
+    Write-Ok ('ACL refreshed on ' + $data + ' (SYSTEM/Administrators Full, Users RX via SID)')
 }
 catch {
     Write-Warn ('Could not set ACL on ' + $data + ' : ' + $_.Exception.Message)
@@ -107,8 +197,14 @@ catch {
 # --- Service ---
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($null -eq $svc) {
-    $hint = 'Windows service ''' + $ServiceName + ''' is not registered. Reinstall MSI or: New-Service -Name ' + $ServiceName + ' -BinaryPathName "' + $svcExe + '" -StartupType Automatic'
+    $hint = 'Windows service ''' + $ServiceName + ''' is not registered.'
     Write-Bad $hint
+    if (Test-Path -LiteralPath $svcExe) {
+        Write-Bad ('Register with (admin): New-Service -Name ' + $ServiceName + ' -BinaryPathName "' + $svcExe + '" -StartupType Automatic; Start-Service ' + $ServiceName)
+    }
+    else {
+        Write-Bad 'Reinstall the MSI (binaries missing, cannot register the service yet).'
+    }
 }
 else {
     $statusText = [string]$svc.Status
@@ -125,13 +221,11 @@ else {
                     Write-Ok 'Service started.'
                 }
                 else {
-                    $failMsg = 'Service still not Running after Start-Service (Status=' + [string]$svc.Status + '). Check Event Viewer / ' + $logs + '\service-startup-failure.log'
-                    Write-Bad $failMsg
+                    Write-Bad ('Service still not Running after Start-Service (Status=' + [string]$svc.Status + '). Check Event Viewer / ' + $logs + '\service-startup-failure.log')
                 }
             }
             catch {
-                $failMsg = 'Start-Service failed: ' + $_.Exception.Message + '. See ' + $logs + '\service-startup-failure.log and Event Viewer - Windows Logs - Application'
-                Write-Bad $failMsg
+                Write-Bad ('Start-Service failed: ' + $_.Exception.Message + '. See ' + $logs + '\service-startup-failure.log and Event Viewer - Windows Logs - Application')
             }
         }
         else {
@@ -152,6 +246,17 @@ try {
 }
 catch {
     Write-Warn 'Could not read service ImagePath from registry.'
+}
+
+# ARP product registration
+$arp = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.DisplayName -like 'WinDNS Blocker*' } |
+    Select-Object -First 1
+if ($null -ne $arp) {
+    Write-Ok ('ARP product: ' + $arp.DisplayName + ' version=' + $arp.DisplayVersion)
+}
+else {
+    Write-Warn 'No WinDNS Blocker entry under Uninstall registry (MSI may not have completed PublishProduct).'
 }
 
 # --- Named pipe ---
@@ -180,7 +285,6 @@ if (Test-Path -LiteralPath $crashUi) {
     Get-Content -LiteralPath $crashUi -Tail 20 | ForEach-Object { Write-Host ('    ' + $_) }
 }
 
-# Desktop / Server Core hint (SKU 143 = Server Datacenter Core in some tables; caption check is primary)
 $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
 if ($null -ne $os) {
     $caption = [string]$os.Caption
@@ -199,6 +303,8 @@ if ($failCount -eq 0) {
 }
 else {
     Write-Host ('Doctor result: FAILED (' + $failCount + ' error(s), ' + $warnCount + ' warning(s))') -ForegroundColor Red
-    Write-Host 'Fix the [FAIL] items above, then re-run doctor.ps1'
+    Write-Host 'If binaries are missing, uninstall any partial product then reinstall:'
+    Write-Host '  msiexec /x {product-code}   OR Settings - Apps - WinDNS Blocker - Uninstall'
+    Write-Host '  msiexec /i DnsBlocker-1.0.5.msi /l*v %TEMP%\dnsblocker-install.log'
     exit 1
 }
