@@ -371,7 +371,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Heal broken upgrades: late RemoveExistingProducts, UI exits before msiexec, Recover-DnsBlocker.cmd. CA type 242 retained.",
+  "releaseNotes": "Stop perpetual Refreshing spinner after wizard ApplyNow (PR #20). CA type 242 + late REP retained.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
