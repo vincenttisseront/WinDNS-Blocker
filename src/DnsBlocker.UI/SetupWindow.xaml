@@ -1,0 +1,65 @@
+<Window x:Class="DnsBlocker.UI.SetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WinDNS Blocker — Assistant d'installation"
+        Icon="pack://application:,,,/Assets/DnsBlocker.ico"
+        Height="640" Width="720"
+        MinHeight="520" MinWidth="640"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BgBrush}"
+        FontFamily="Segoe UI"
+        FontSize="13">
+  <DockPanel Margin="20">
+    <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+            BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1"
+            CornerRadius="6" Padding="16" Margin="0,0,0,14">
+      <StackPanel Orientation="Horizontal">
+        <Image Source="pack://application:,,,/Assets/windns-blocker-logo-64.png"
+               Width="48" Height="48" Margin="0,0,14,0"
+               Stretch="Uniform" SnapsToDevicePixels="True"
+               RenderOptions.BitmapScalingMode="HighQuality"/>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="Assistant d'installation" FontSize="22" FontWeight="SemiBold" Foreground="#123"/>
+          <TextBlock Text="Vérifie l'installation, répare si besoin, puis ouvre la configuration initiale."
+                     Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+      <Button x:Name="RecheckButton" Content="Revérifier" Click="Recheck_Click"/>
+      <Button x:Name="RepairButton" Content="Réparer l'installation" Click="Repair_Click"/>
+      <Button x:Name="ContinueButton" Content="Ouvrir la configuration" Click="Continue_Click"
+              FontWeight="SemiBold" IsEnabled="False"/>
+      <Button Content="Fermer" Click="Close_Click" Background="#5B6B7C"/>
+    </StackPanel>
+
+    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}"
+            BorderThickness="1" CornerRadius="6" Padding="16">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+          <TextBlock x:Name="StatusTitle" Text="Contrôle en cours…" FontWeight="SemiBold" FontSize="15"/>
+          <TextBlock x:Name="InstallRootLabel" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+          <TextBlock x:Name="ProgressLabel" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+          <ProgressBar x:Name="BusyBar" Height="8" Margin="0,10,0,0" IsIndeterminate="True" Visibility="Collapsed"/>
+        </StackPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <ItemsControl x:Name="ChecksList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,8" Padding="10,8" CornerRadius="4"
+                        Background="#F8FAFC" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Width="56" FontWeight="SemiBold"
+                               Text="{Binding Badge}" Foreground="{Binding BadgeBrush}"/>
+                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                  </DockPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </DockPanel>
+    </Border>
+  </DockPanel>
+</Window>

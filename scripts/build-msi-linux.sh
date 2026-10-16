@@ -104,6 +104,7 @@ for p in all_files:
 by_dir: dict[str, list[str]] = defaultdict(list)
 component_ids: list[str] = []
 service_exe_cid = service_exe_fid = None
+ui_exe_fid = None
 
 for p in all_files:
     rel = p.relative_to(root_files)
@@ -123,11 +124,15 @@ for p in all_files:
         <ServiceControl Id="DnsBlockerServiceControl" Name="DnsBlocker"
           Start="install" Stop="both" Remove="uninstall" Wait="yes" />
 '''
+    if rel.as_posix().lower() == "ui/dnsblocker.ui.exe":
+        ui_exe_fid = fid
     body += "      </Component>"
     by_dir[did].append(body)
 
 if not service_exe_cid:
     raise SystemExit("DnsBlocker.Service.exe not found in publish output")
+if not ui_exe_fid:
+    raise SystemExit("UI/DnsBlocker.UI.exe not found in publish output (needed for /setup launch)")
 
 logs_cid = "cLogsFolder"
 component_ids.append(logs_cid)
@@ -145,9 +150,25 @@ by_dir["ApplicationProgramsFolder"].append(f'''      <Component Id="{shortcut_ci
           WorkingDirectory="UIDIR"
           Icon="ProductIcon.ico"
           IconIndex="0" />
+        <Shortcut Id="SetupStartMenu" Name="Assistant d'installation WinDNS Blocker"
+          Description="Diagnostic et réparation (sans PowerShell)"
+          Target="[UIDIR]DnsBlocker.UI.exe"
+          Arguments="/setup"
+          WorkingDirectory="UIDIR"
+          Icon="ProductIcon.ico"
+          IconIndex="0" />
         <RemoveFolder Id="RemoveProgramMenu" On="uninstall" />
         <RegistryValue Root="HKLM" Key="Software\\DnsBlocker" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>''')
+
+# Post-install: launch Setup GUI (doctor/repair + firstrun handoff). Skip silent installs (UILevel<=2).
+launch_setup_xml = f'''
+    <CustomAction Id="LaunchSetupAssistant" FileKey="{ui_exe_fid}" ExeCommand="/setup" Return="asyncNoWait" Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchSetupAssistant" After="InstallFinalize">NOT REMOVE="ALL" AND UILevel &gt; 2</Custom>
+    </InstallExecuteSequence>
+    <!-- Write firstrun.pending via a tiny Type 51 + deferred is hard in wixl; Setup.exe marks the flag itself. -->
+'''
 
 children: dict[Path, list[Path]] = defaultdict(list)
 for d in dir_ids:
@@ -187,6 +208,7 @@ wxs = f'''<?xml version="1.0" encoding="utf-8"?>
     <Feature Id="ProductFeature" Title="WinDNS Blocker" Level="1">
 {feature_refs}
     </Feature>
+{launch_setup_xml}
     <Directory Id="TARGETDIR" Name="SourceDir">
       <!-- Explicit Name avoids wixl emitting DefaultDir='.' which can break Program Files resolution -->
       <Directory Id="ProgramFiles64Folder" Name="ProgramFiles64">
@@ -290,7 +312,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Repair sparse installs: Repair-DnsBlocker.ps1 + MSI layout gates for Service/UI/hostfxr.",
+  "releaseNotes": "GUI Setup assistant (/setup): doctor+repair without PowerShell CLI; first-run handoff to UI; MSI launches assistant after install.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

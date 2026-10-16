@@ -13,6 +13,25 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         base.OnStartup(e);
+
+        var args = e.Args ?? [];
+        var setup = args.Any(a => string.Equals(a, FirstRunHandoff.ArgSetup, StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(a, "--setup", StringComparison.OrdinalIgnoreCase));
+        var firstRunArg = args.Any(a => string.Equals(a, FirstRunHandoff.ArgFirstRun, StringComparison.OrdinalIgnoreCase)
+                                        || string.Equals(a, "--firstrun", StringComparison.OrdinalIgnoreCase));
+
+        if (setup)
+        {
+            MainWindow = new SetupWindow();
+            MainWindow.Show();
+            return;
+        }
+
+        var main = new MainWindow();
+        if (firstRunArg || FirstRunHandoff.IsPending())
+            main.EnableFirstRunMode();
+        MainWindow = main;
+        MainWindow.Show();
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -46,7 +65,7 @@ public partial class App : Application
                 "WinDNS Blocker a rencontré une erreur mais reste ouvert.\n\n" +
                 title + ":\n" + ex.Message +
                 "\n\nSi le service DnsBlocker n'est pas démarré, utilisez le bouton « Démarrer le service ».\n" +
-                "Diagnostic : powershell -ExecutionPolicy Bypass -File \"C:\\Program Files\\DnsBlocker\\doctor.ps1\"\n" +
+                "Diagnostic : menu Démarrer → « Assistant d'installation WinDNS Blocker »\n" +
                 "Journal : " + Path.Combine(AppPaths.LogDirectory, "ui-crash.log"),
                 "WinDNS Blocker",
                 MessageBoxButton.OK,

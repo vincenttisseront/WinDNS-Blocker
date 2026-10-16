@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
+using DnsBlocker.Core.Paths;
 using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.UI;
@@ -14,6 +15,7 @@ public partial class MainWindow : Window
     private AppConfig? _config;
     private bool _startupUpdateCheckDone;
     private bool _serviceConnected;
+    private bool _firstRunMode;
     private int _busyDepth;
     private IReadOnlyList<string> _lastServiceLogs = [];
     private string _machineDomain = "";
@@ -26,6 +28,30 @@ public partial class MainWindow : Window
         DomainSearchBox.TextChanged += (_, _) => UpdateDomainPlaceholder();
         RefreshLogsView();
         Loaded += OnLoaded;
+    }
+
+    /// <summary>
+    /// Called by App when /firstrun is passed or ProgramData\DnsBlocker\firstrun.pending exists.
+    /// Coordinates with any parallel first-run wizard via that flag file.
+    /// </summary>
+    public void EnableFirstRunMode()
+    {
+        _firstRunMode = true;
+        FirstRunBanner.Visibility = Visibility.Visible;
+        // Configuration tab is typically index 1 (Statut=0, Configuration=1)
+        if (MainTabs.Items.Count > 1)
+            MainTabs.SelectedIndex = 1;
+        _journal.Write("Mode configuration initiale (/firstrun ou firstrun.pending)");
+        RefreshLogsView();
+    }
+
+    private void FirstRunDismiss_Click(object sender, RoutedEventArgs e)
+    {
+        FirstRunBanner.Visibility = Visibility.Collapsed;
+        FirstRunHandoff.ClearPending();
+        _firstRunMode = false;
+        _journal.Write("Bannière configuration initiale fermée");
+        RefreshLogsView();
     }
 
     private void PrefillMachineDomain()
@@ -391,11 +417,10 @@ public partial class MainWindow : Window
             $"Domaine machine : {(string.IsNullOrEmpty(_machineDomain) ? "(workgroup)" : _machineDomain)}\n\n" +
             "Actions possibles :\n" +
             "• Cliquez « Démarrer le service » (UAC si besoin)\n" +
-            "• Ou en admin : sc start DnsBlocker\n" +
-            "• Diagnostic : powershell -ExecutionPolicy Bypass -File \"C:\\Program Files\\DnsBlocker\\doctor.ps1\" -StartServiceIfStopped\n" +
+            "• Menu Démarrer → « Assistant d'installation WinDNS Blocker » (diagnostic / réparation sans PowerShell)\n" +
             "• Logs : C:\\ProgramData\\DnsBlocker\\logs\\\n" +
             "• Vérifiez que le MSI a bien installé le service";
-        UpdateStatusLine.Text = "Mise à jour : service injoignable — lancez doctor.ps1 si besoin";
+        UpdateStatusLine.Text = "Mise à jour : service injoignable — ouvrez l'assistant d'installation";
         ServiceHelpPanel.Visibility = Visibility.Visible;
         RefreshLogsView();
     }

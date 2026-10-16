@@ -41,10 +41,11 @@ public static class AppPaths
         try
         {
             EnsureDirectories();
+            // SIDs work on FR/EN Server (BUILTIN\Administrators often fails as Administrateurs).
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "icacls.exe",
-                Arguments = $"\"{DataDirectory}\" /grant \"NT AUTHORITY\\SYSTEM:(OI)(CI)F\" \"BUILTIN\\Administrators:(OI)(CI)F\" \"BUILTIN\\Users:(OI)(CI)RX\"",
+                Arguments = $"\"{DataDirectory}\" /grant *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,

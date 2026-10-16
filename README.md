@@ -106,7 +106,11 @@ msiexec /i DnsBlocker-1.0.6.msi /l*v $env:TEMP\dnsblocker-install.log
 powershell -ExecutionPolicy Bypass -File "C:\Program Files\DnsBlocker\doctor.ps1" -StartServiceIfStopped
 ```
 
-**Broken/sparse install** (`doctor.ps1` present but `DnsBlocker.Service.exe` missing):
+**After MSI install (no PowerShell needed):** the Setup assistant opens automatically (`DnsBlocker.UI.exe /setup`). It runs the same checks as `doctor.ps1`, can repair a sparse install, then opens the UI in **configuration initiale** (`/firstrun` + `%ProgramData%\DnsBlocker\firstrun.pending`).
+
+You can also open **Menu Démarrer → Assistant d'installation WinDNS Blocker**.
+
+**Broken/sparse install** (CLI fallback still available):
 
 ```powershell
 # Elevated — downloads MSI, uninstalls partial product, reinstalls, runs doctor
