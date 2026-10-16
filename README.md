@@ -13,7 +13,24 @@ Hub (service + UI)
   └─ WinRM/CIM ─► DNS-A, DNS-B, … DNS-N   (policies DnsBlocker_0001…)
 ```
 
-`blocklists.txt` / `whitelists.txt` are **URLs to lists**, not raw domains. `regex.txt` is **not** applied (Windows QRP has no regex).
+`blocklists.txt` / `whitelists.txt` are **URLs to list indexes**, not raw domains. `regex.txt` is **not** applied (Windows QRP has no regex).
+
+### Curated extra blocklists
+
+In addition to Steve Jenkins LoL, the hub can ingest **curated ExtraBlocklistUrls** (toggles in **Configuration**). Defaults on first run:
+
+| Toggle | Default | Raw URL |
+|--------|---------|---------|
+| YouTube ads (kboghdady) | on | `https://raw.githubusercontent.com/kboghdady/youTube_ads_4_pi-hole/master/youtubelist.txt` |
+| OISD big | on | `https://big.oisd.nl/domainswild` |
+| OISD NSFW (family) | on | `https://nsfw.oisd.nl/domainswild` |
+| Chadmayfield porn (adult) | **off** | `https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list` |
+
+OISD uses the **domainswild** endpoints (`*.apex`) so Windows DNS QRP `EQ,*.domain` covers subdomains — not the ABP root URLs (`https://big.oisd.nl/`) Vincent may have seen truncated.
+
+**Auto-refresh:** the service re-downloads Steve Jenkins indexes + every enabled curated/custom URL on the **daily scheduled sync** (`ScheduledHour` / `ScheduledMinute`, default **02:00 local**) and whenever you click **Mettre à jour maintenant**.
+
+**YouTube ads caveat:** DNS-only blocking is **partial**. This list helps on phones that use your DNS, but it will not kill all mobile YouTube ads (app-bundled / same-domain delivery). Pair with client-side blockers when needed.
 
 ## Prerequisites (Windows Server 2022)
 
@@ -117,8 +134,9 @@ Set `DNSBLOCKER_USE_MOCK=1` to force the in-memory DNS provider (also automatic 
 ## Limits
 
 1. **No regex** — Steve Jenkins `regex.txt` cannot be imported into QRP.
-2. **Policy size** — domains are chunked (~1000 FQDN/policy by default). Very large lists may still hit DNS API limits; consider reducing sources or raising operational monitoring.
+2. **Policy size** — domains are chunked (~1000 FQDN/policy by default). Very large lists (e.g. Chadmayfield ~1.9M) may still hit DNS API limits; keep the adult toggle off unless you accept many QRP policies.
 3. **Stats** — Phase C uses DNS analytical ETW when enabled; without it the Stats tab shows an empty/actionable message (not a full Pi-hole live dashboard).
+4. **YouTube / mobile ads** — DNS blocklists cannot remove every in-app ad; curated YouTube + OISD lists reduce domains, they do not guarantee an ad-free YouTube app.
 
 ## Uninstall
 

@@ -64,6 +64,14 @@ public partial class MainWindow : Window
             cfg.BlocklistsUrl = BlocklistsUrlBox.Text.Trim();
             cfg.WhitelistsUrl = WhitelistsUrlBox.Text.Trim();
             cfg.RegexUrl = RegexUrlBox.Text.Trim();
+            cfg.CuratedYoutubeAds = CuratedYoutubeAdsCheck.IsChecked == true;
+            cfg.CuratedOisdBig = CuratedOisdBigCheck.IsChecked == true;
+            cfg.CuratedOisdNsfw = CuratedOisdNsfwCheck.IsChecked == true;
+            cfg.CuratedChadmayfieldPorn = CuratedChadmayfieldCheck.IsChecked == true;
+            cfg.ExtraBlocklistUrls = ExtraBlocklistUrlsBox.Text
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(u => !string.IsNullOrWhiteSpace(u))
+                .ToList();
             cfg.PolicyAction = (ActionBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "DENY";
             if (int.TryParse(ChunkSizeBox.Text, out var chunk))
                 cfg.ChunkSize = chunk;
@@ -241,6 +249,11 @@ public partial class MainWindow : Window
         BlocklistsUrlBox.Text = cfg.BlocklistsUrl;
         WhitelistsUrlBox.Text = cfg.WhitelistsUrl;
         RegexUrlBox.Text = cfg.RegexUrl;
+        CuratedYoutubeAdsCheck.IsChecked = cfg.CuratedYoutubeAds;
+        CuratedOisdBigCheck.IsChecked = cfg.CuratedOisdBig;
+        CuratedOisdNsfwCheck.IsChecked = cfg.CuratedOisdNsfw;
+        CuratedChadmayfieldCheck.IsChecked = cfg.CuratedChadmayfieldPorn;
+        ExtraBlocklistUrlsBox.Text = string.Join(Environment.NewLine, cfg.ExtraBlocklistUrls);
         ChunkSizeBox.Text = cfg.ChunkSize.ToString();
         ParallelBox.Text = cfg.MaxParallelTargets.ToString();
         HourBox.Text = cfg.ScheduledHour.ToString();

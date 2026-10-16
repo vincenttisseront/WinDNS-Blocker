@@ -48,7 +48,7 @@ public sealed class SyncEngine
             var ingest = await _ingestor.IngestAsync(
                 config.BlocklistsUrl,
                 config.WhitelistsUrl,
-                config.ExtraBlocklistUrls,
+                CuratedBlocklists.ResolveExtraBlocklistUrls(config),
                 config.ExtraWhitelistUrls,
                 cancellationToken).ConfigureAwait(false);
 
