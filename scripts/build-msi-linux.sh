@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${1:-$(grep -oP '(?<=<Version>)[^<]+' "$ROOT/Directory.Build.props" | head -1 || echo 1.0.0)}"
-UPDATE_FEED_BASE="${UPDATE_FEED_BASE_URL:-https://example.com/releases}"
+UPDATE_FEED_BASE="${UPDATE_FEED_BASE_URL:-https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/v${VERSION}}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 
 export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
@@ -18,18 +18,31 @@ ARTIFACTS="$ROOT/artifacts"
 STAGE="$ROOT/artifacts/msi-stage"
 WXS="$ARTIFACTS/DnsBlocker.generated.wxs"
 MSI="$ARTIFACTS/DnsBlocker-$VERSION.msi"
+ICON_SRC="$ROOT/src/DnsBlocker.UI/Assets/DnsBlocker.ico"
+if [[ ! -f "$ICON_SRC" ]]; then
+  ICON_SRC="$ROOT/installer/Assets/DnsBlocker.ico"
+fi
 
 command -v wixl >/dev/null || { echo "wixl required (apt install wixl)"; exit 1; }
+[[ -f "$ICON_SRC" ]] || { echo "missing icon: $ICON_SRC"; exit 1; }
 
 rm -rf "$STAGE" "$ARTIFACTS"
 mkdir -p "$SERVICE_OUT" "$UI_OUT" "$ARTIFACTS" "$STAGE/DnsBlocker/UI" "$STAGE/ProgramData/DnsBlocker/logs"
 
 echo "==> Publishing Service + UI (win-x64 self-contained)"
 dotnet publish "$ROOT/src/DnsBlocker.Service/DnsBlocker.Service.csproj" \
-  -c "$CONFIGURATION" -r win-x64 --self-contained true -o "$SERVICE_OUT"
+  -c "$CONFIGURATION" -r win-x64 --self-contained true -o "$SERVICE_OUT" \
+  -p:Version="$VERSION"
 dotnet publish "$ROOT/src/DnsBlocker.UI/DnsBlocker.UI.csproj" \
   -c "$CONFIGURATION" -r win-x64 --self-contained true -o "$UI_OUT" \
-  -p:EnableWindowsTargeting=true
+  -p:EnableWindowsTargeting=true \
+  -p:Version="$VERSION"
+
+echo "==> Embedding Start Menu / exe icon (Linux cross-publish does not apply ApplicationIcon)"
+chmod +x "$ROOT/scripts/embed-win-icon.sh"
+"$ROOT/scripts/embed-win-icon.sh" "$UI_OUT/DnsBlocker.UI.exe" "$ICON_SRC"
+# Ship the .ico beside the UI so shortcuts/tools can resolve a real file path if needed.
+cp -a "$ICON_SRC" "$UI_OUT/DnsBlocker.ico"
 
 # Stage payload (exclude PDBs to keep MSI smaller)
 mkdir -p "$STAGE/DnsBlocker/UI"
@@ -46,12 +59,17 @@ cp -a "$ROOT/scripts/Verify-Install.cmd" "$STAGE/DnsBlocker/Verify-Install.cmd"
 # ensure logs placeholder
 : > "$STAGE/ProgramData/DnsBlocker/logs/.keep"
 
-python3 - "$STAGE" "$WXS" "$VERSION" <<'PY'
+python3 - "$STAGE" "$WXS" "$VERSION" "$ICON_SRC" <<'PY'
 import sys, uuid, hashlib
 from collections import defaultdict
 from pathlib import Path
 
 stage, wxs_path, version = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+icon_src = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+if icon_src is None or not icon_src.is_file():
+    raise SystemExit(f"App icon not found: {icon_src}")
+icon_src = icon_src.resolve()
+
 UPGRADE_CODE = "8F3A2C1D-9B4E-4F6A-A7C8-1D2E3F4A5B6C"
 PRODUCT_CODE = str(uuid.uuid5(uuid.NAMESPACE_URL, f"DnsBlocker/{version}"))
 
@@ -112,7 +130,9 @@ by_dir["ApplicationProgramsFolder"].append(f'''      <Component Id="{shortcut_ci
         <Shortcut Id="UIStartMenu" Name="WinDNS Blocker"
           Description="WinDNS Blocker administration UI"
           Target="[UIDIR]DnsBlocker.UI.exe"
-          WorkingDirectory="UIDIR" />
+          WorkingDirectory="UIDIR"
+          Icon="ProductIcon.ico"
+          IconIndex="0" />
         <RemoveFolder Id="RemoveProgramMenu" On="uninstall" />
         <RegistryValue Root="HKLM" Key="Software\\DnsBlocker" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>''')
@@ -150,6 +170,8 @@ wxs = f'''<?xml version="1.0" encoding="utf-8"?>
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
                   AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon Id="ProductIcon.ico" SourceFile="{xml_escape(str(icon_src))}" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon.ico" />
     <Feature Id="ProductFeature" Title="WinDNS Blocker" Level="1">
 {feature_refs}
     </Feature>
@@ -182,6 +204,28 @@ echo "==> Compiling MSI with wixl"
 # wixl: -a x64 for 64-bit
 wixl -v -a x64 -o "$MSI" "$WXS"
 
+# Verify Icon table + UI exe icon landed in the package
+echo "==> Verifying MSI icon wiring"
+if command -v msiinfo >/dev/null 2>&1; then
+  if ! msiinfo export "$MSI" Icon 2>/dev/null | head -5 | grep -qi 'ProductIcon'; then
+    echo "WARNING: Icon table may be missing ProductIcon.ico" >&2
+    msiinfo tables "$MSI" 2>/dev/null | head -40 || true
+  else
+    echo "Icon table contains ProductIcon.ico"
+  fi
+fi
+TMP_EXTRACT=$(mktemp -d)
+trap 'rm -rf "$TMP_EXTRACT"' EXIT
+if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
+  UI_EXE=$(find "$TMP_EXTRACT" -iname 'DnsBlocker.UI.exe' | head -1 || true)
+  if [[ -n "$UI_EXE" ]] && command -v wrestool >/dev/null 2>&1; then
+    wrestool -l "$UI_EXE" | grep -Eq 'group_icon|--type=14' \
+      && echo "OK: extracted UI exe has group_icon" \
+      || { echo "FAIL: extracted UI exe missing group_icon"; exit 1; }
+  fi
+  find "$TMP_EXTRACT" -iname 'DnsBlocker.ico' | head -3 || true
+fi
+
 SHA=$(sha256sum "$MSI" | awk '{print $1}')
 PUBLISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 MSI_URL="${UPDATE_FEED_BASE%/}/DnsBlocker-$VERSION.msi"
@@ -190,7 +234,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Linux wixl build of WinDNS Blocker $VERSION (self-contained win-x64).",
+  "releaseNotes": "Fix Start Menu icon: embed ICO into UI exe (Linux publish) + ProductIcon.ico shortcut/ARP binding.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

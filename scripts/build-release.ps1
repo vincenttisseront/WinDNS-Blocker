@@ -92,6 +92,11 @@ if ($runningOnWindows) {
     dotnet publish (Join-Path $repoRoot "src\DnsBlocker.UI\DnsBlocker.UI.csproj") `
         -o $uiOut @publishArgs
     if ($LASTEXITCODE -ne 0) { throw "UI publish failed (exit $LASTEXITCODE)." }
+    # Ensure on-disk .ico ships next to UI (Shortcut Icon table + ARP use installer Assets separately).
+    $uiIcon = Join-Path $repoRoot "src\DnsBlocker.UI\Assets\DnsBlocker.ico"
+    if (Test-Path $uiIcon) {
+        Copy-Item -Force $uiIcon (Join-Path $uiOut "DnsBlocker.ico")
+    }
     $uiPublished = $true
 }
 else {

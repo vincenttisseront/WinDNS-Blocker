@@ -31,6 +31,10 @@
 
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <!-- Icon/@Id must end with .ico/.exe or ARP and Start Menu icons often fail to resolve. -->
+    <Icon Id="ProductIcon.ico" SourceFile="Assets\DnsBlocker.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon.ico" />
+
     <Feature Id="ProductFeature" Title="WinDNS Blocker" Description="Hub service and WPF UI" Level="1">
       <ComponentGroupRef Id="ServiceComponents" />
       <ComponentGroupRef Id="UiComponents" />
@@ -134,7 +138,12 @@
     </Component>
   </Fragment>
 
-  <!-- Start Menu shortcut for the UI -->
+  <!--
+    Start Menu shortcut for the UI.
+    Icon Id must match Icon/@Id (including .ico suffix). Also ensure publish copies
+    DnsBlocker.ico into UiPublish and that DnsBlocker.UI.exe has an embedded icon
+    (ApplicationIcon on Windows; scripts/embed-win-icon.sh after Linux cross-publish).
+  -->
   <Fragment>
     <Component Id="ApplicationShortcut" Directory="ApplicationProgramsFolder" Guid="D6A9E3C4-5F7B-6C0D-1E2F-3A4B5C6D7E8F">
       <Shortcut
@@ -142,7 +151,9 @@
         Name="WinDNS Blocker"
         Description="WinDNS Blocker Hub UI"
         Target="[UiFolder]DnsBlocker.UI.exe"
-        WorkingDirectory="UiFolder" />
+        WorkingDirectory="UiFolder"
+        Icon="ProductIcon.ico"
+        IconIndex="0" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
       <RegistryValue
         Root="HKLM"
