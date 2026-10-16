@@ -129,9 +129,11 @@ public partial class MainWindow : Window
     {
         try
         {
+            // WinRM wizard is for remote targets only — skip local / scaffold names when prefilling.
             var prefill = TargetsBox.Text
                 .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault(t => !string.Equals(t, "localhost", StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(t =>
+                    !SetupWizardGate.IsLocalOnlyTarget(t) && !LocalDnsTarget.IsLocalTarget(t));
             var wizard = new TargetSetupWizardWindow(_client, _journal, prefill) { Owner = this };
             var ok = wizard.ShowDialog() == true;
             _journal.Write(ok
@@ -142,6 +144,43 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, Loc.T("Main.TargetWizardTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void AddLocalDns_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await RunBusyAsync(Loc.T("Btn.AddLocalDns"), async () =>
+            {
+                var result = await _client.EnsureLocalDnsTargetAsync().ConfigureAwait(true);
+                foreach (var line in result.Log)
+                    _journal.Write(line);
+
+                if (!result.DnsServerDetected)
+                {
+                    MessageBox.Show(
+                        Loc.T("Main.LocalDns.NotDetected"),
+                        Loc.T("Main.LocalDns.Title"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+
+                _journal.Write(Loc.F("Main.Journal.AddLocalDns", result.Hostname ?? "?"));
+                MessageBox.Show(
+                    result.Ok
+                        ? Loc.F("Main.LocalDns.Ok", result.Hostname ?? "")
+                        : Loc.F("Main.LocalDns.Fail", result.Message),
+                    Loc.T("Main.LocalDns.Title"),
+                    MessageBoxButton.OK,
+                    result.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                await RefreshAsync().ConfigureAwait(true);
+            }).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, Loc.T("Main.LocalDns.Title"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -614,7 +653,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        PolicyStatusGrid.ItemsSource = probe.Targets;
+        PolicyStatusGrid.ItemsSource = probe.Targets.Select(t => new
+        {
+            t.Target,
+            Kind = t.IsLocal || LocalDnsTarget.IsLocalTarget(t.Target)
+                ? Loc.T("Status.Kind.Local")
+                : Loc.T("Status.Kind.Remote"),
+            t.AppliedLabel,
+            t.LivePolicyCount,
+            t.LiveEnabledCount,
+            t.LastSyncPolicyCount,
+            t.LastSyncStatus,
+            t.ProbeError
+        }).ToList();
         var ok = probe.Targets.Count(t => t.AppliedOk);
         var fail = probe.Targets.Count(t => !t.ProbeOk);
         var failSuffix = fail > 0 ? Loc.F("Main.Probe.FailSuffix", fail) : "";
@@ -676,7 +727,19 @@ public partial class MainWindow : Window
             StatsCollectionStatus.Text = status.StatsEnabled
                 ? Loc.T("Main.Stats.CollectionOn") + " — " + (status.StatsMessage ?? "")
                 : Loc.T("Main.Stats.CollectionOff");
-            TargetsGrid.ItemsSource = last?.Targets ?? new List<TargetSyncResult>();
+            TargetsGrid.ItemsSource = (last?.Targets ?? [])
+                .Select(t => new
+                {
+                    t.Target,
+                    Kind = t.IsLocal || LocalDnsTarget.IsLocalTarget(t.Target)
+                        ? Loc.T("Status.Kind.Local")
+                        : Loc.T("Status.Kind.Remote"),
+                    t.Status,
+                    t.PolicyCount,
+                    Duration = t.Duration?.ToString() ?? "",
+                    t.Error
+                })
+                .ToList();
             BindPolicyProbe(status.LastPolicyProbe);
             _lastServiceLogs = status.RecentLogs;
 

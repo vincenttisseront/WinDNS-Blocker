@@ -1,6 +1,7 @@
 using DnsBlocker.Core.Dns;
 using DnsBlocker.Core.Ingest;
 using DnsBlocker.Core.Models;
+using DnsBlocker.Core.Net;
 using DnsBlocker.Core.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -86,6 +87,7 @@ public sealed class SyncEngine
                 result.Targets.Add(new TargetSyncResult
                 {
                     Target = t,
+                    IsLocal = LocalDnsTarget.IsLocalTarget(t),
                     Status = TargetSyncStatus.Idle,
                     DomainCount = ingest.Domains.Count
                 });

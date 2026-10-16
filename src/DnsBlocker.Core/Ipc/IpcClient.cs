@@ -94,6 +94,10 @@ public sealed class IpcClient : IAsyncDisposable
         CancellationToken cancellationToken = default) =>
         InvokeAsync<PrepareDnsTargetResult>(IpcProtocol.MethodPrepareDnsTarget, request, cancellationToken);
 
+    public Task<EnsureLocalDnsTargetResult> EnsureLocalDnsTargetAsync(
+        CancellationToken cancellationToken = default) =>
+        InvokeAsync<EnsureLocalDnsTargetResult>(IpcProtocol.MethodEnsureLocalDnsTarget, null, cancellationToken);
+
     public Task<List<PreparedTargetInfo>> GetPreparedTargetsAsync(CancellationToken cancellationToken = default) =>
         InvokeAsync<List<PreparedTargetInfo>>(IpcProtocol.MethodGetPreparedTargets, null, cancellationToken);
 

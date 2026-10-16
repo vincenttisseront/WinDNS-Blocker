@@ -11,6 +11,8 @@ public enum TargetSyncStatus
 public sealed class TargetSyncResult
 {
     public required string Target { get; init; }
+    /// <summary>True when this target is the hub's local DNS Server (no WinRM).</summary>
+    public bool IsLocal { get; set; }
     public TargetSyncStatus Status { get; set; } = TargetSyncStatus.Idle;
     public string? Error { get; set; }
     public int PolicyCount { get; set; }
@@ -52,6 +54,8 @@ public sealed class ServiceStatus
 public sealed class TargetPolicyStatus
 {
     public required string Target { get; init; }
+    /// <summary>True when this target is the hub's local DNS Server (no WinRM).</summary>
+    public bool IsLocal { get; init; }
     public TargetSyncStatus LastSyncStatus { get; init; } = TargetSyncStatus.Idle;
     public DateTimeOffset? LastSyncFinishedAt { get; init; }
     public string? LastSyncError { get; init; }

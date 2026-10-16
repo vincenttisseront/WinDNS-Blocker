@@ -12,10 +12,9 @@
   <sys:String x:Key="Btn.VerifyPolicies">Vérifier les politiques QRP</sys:String>
   <sys:String x:Key="Btn.SaveConfig">Enregistrer la configuration</sys:String>
   <sys:String x:Key="Btn.PrepareTarget">Préparer une cible (WinRM)…</sys:String>
+  <sys:String x:Key="Btn.AddLocalDns">Ajouter ce serveur (DNS local)</sys:String>
   <sys:String x:Key="Btn.Search">Rechercher</sys:String>
   <sys:String x:Key="Btn.Load">Charger</sys:String>
-  <sys:String x:Key="Btn.EnableStats">Activer la collecte sur les cibles DNS</sys:String>
-  <sys:String x:Key="Btn.TestBlock">Tester le blocage</sys:String>
   <sys:String x:Key="Btn.Back">Précédent</sys:String>
   <sys:String x:Key="Btn.Next">Suivant</sys:String>
   <sys:String x:Key="Btn.Skip">Passer</sys:String>
@@ -37,8 +36,11 @@
   <sys:String x:Key="Tab.Stats">Stats</sys:String>
   <sys:String x:Key="Status.Connecting">Connexion au service…</sys:String>
   <sys:String x:Key="Status.LastSyncTitle">Dernière sync (poussée hub → DNS)</sys:String>
-  <sys:String x:Key="Status.SucceededHint">Le statut « Succeeded » indique que le hub a poussé des chunks — pas que les politiques sont encore présentes/activées sur le serveur. Les QRP sont sur les cibles (ex. windc05), pas sur le hub. nslookup vers ::1 / windc04 ne montre pas de blocage — utilisez « Tester le blocage » (Resolve contre la cible) ou : nslookup beeg.com windc05.ar-systems.fr</sys:String>
+  <sys:String x:Key="Status.SucceededHint">Le statut « Succeeded » indique que le hub a poussé des chunks — pas que les politiques sont encore présentes/activées sur le serveur.</sys:String>
   <sys:String x:Key="Status.Col.Server">Serveur</sys:String>
+  <sys:String x:Key="Status.Col.Kind">Type</sys:String>
+  <sys:String x:Key="Status.Kind.Local">Local (sans WinRM)</sys:String>
+  <sys:String x:Key="Status.Kind.Remote">Distant (WinRM)</sys:String>
   <sys:String x:Key="Status.Col.SyncStatus">Statut sync</sys:String>
   <sys:String x:Key="Status.Col.PoliciesSync">Politiques (sync)</sys:String>
   <sys:String x:Key="Status.Col.Duration">Durée</sys:String>
@@ -50,8 +52,6 @@
   <sys:String x:Key="Status.Col.Enabled">Activées</sys:String>
   <sys:String x:Key="Status.Col.LastSync">Sync (dernier)</sys:String>
   <sys:String x:Key="Status.Col.ProbeError">Erreur sonde</sys:String>
-  <sys:String x:Key="Status.BlockTestTitle">Vérification du blocage</sys:String>
-  <sys:String x:Key="Status.BlockTestHint">Résout un domaine de la blocklist contre la cible DNS (ex. windc05). Laissez vide pour un échantillon de la liste active. Le DNS client doit être uniquement ce serveur (pas de DoH / 8.8.8.8).</sys:String>
   <sys:String x:Key="Status.ActionLog">Journal d'actions (Statut)</sys:String>
   <sys:String x:Key="Cfg.SourcesTitle">Sources de listes</sys:String>
   <sys:String x:Key="Cfg.BlocklistsUrl">URL blocklists.txt (liste de listes)</sys:String>
@@ -68,7 +68,7 @@
   <sys:String x:Key="Cfg.ChunkSize">Taille de paquet FQDN</sys:String>
   <sys:String x:Key="Cfg.Parallel">Parallélisme cibles</sys:String>
   <sys:String x:Key="Cfg.ScheduleHour">Heure sync quotidienne (locale)</sys:String>
-  <sys:String x:Key="Cfg.EnableStats">Activer la collecte de stats (analytique DNS distant + ETW)</sys:String>
+  <sys:String x:Key="Cfg.EnableStats">Activer la collecte de stats (ETW DNS)</sys:String>
   <sys:String x:Key="Cfg.UpdatesTitle">Mises à jour de l'application</sys:String>
   <sys:String x:Key="Cfg.UpdateFeedUrl">URL du flux version.json</sys:String>
   <sys:String x:Key="Cfg.UpdateFeedDefaultHint">Par défaut : GitHub Releases latest (…/releases/latest/download/version.json). Effacez le champ pour désactiver les vérifications.</sys:String>
@@ -76,7 +76,8 @@
   <sys:String x:Key="Cfg.AutoInstall">Installer automatiquement (service silencieux msiexec /qn)</sys:String>
   <sys:String x:Key="Cfg.UpdatesHint">Sans installation auto, seule une notification est affichée. L'installation depuis l'UI passe par le service (déjà élevé) ; un installateur local utiliserait UAC (runas).</sys:String>
   <sys:String x:Key="Cfg.FarmTitle">Farm DNS (cibles du hub)</sys:String>
-  <sys:String x:Key="Cfg.FarmHint">Un hostname / FQDN par ligne. Le service pousse les politiques vers chaque cible via WinRM. Exemple prod : windc05.ar-systems.fr</sys:String>
+  <sys:String x:Key="Cfg.FarmHint">Un hostname / FQDN par ligne. Le DNS local de cette machine utilise PowerShell/CIM sans WinRM ; les cibles distantes nécessitent la préparation WinRM. Exemple distant : windc05.ar-systems.fr</sys:String>
+  <sys:String x:Key="Cfg.AddLocalDnsHint">Si cette machine a le rôle DNS Server, ajoutez-la comme cible et préparez-la en local (sans WinRM).</sys:String>
   <sys:String x:Key="Cfg.Language">Langue</sys:String>
   <sys:String x:Key="Cfg.LanguageHint">Auto suit la langue de l'interface Windows (français si fr*, sinon anglais). Un changement de langue s'applique au redémarrage.</sys:String>
   <sys:String x:Key="Cfg.Lang.Auto">Auto (suivre Windows)</sys:String>
@@ -87,7 +88,6 @@
   <sys:String x:Key="Logs.Hint">Journal des actions UI (et logs service). Fichier : %ProgramData%\DnsBlocker\logs\ui-actions.log</sys:String>
   <sys:String x:Key="Stats.Period">Période (heures) :</sys:String>
   <sys:String x:Key="Stats.TopN">Top N :</sys:String>
-  <sys:String x:Key="Stats.CollectionHint">Le hub sur windc04 ne voit pas les requêtes vers windc05 tant que le journal analytique distant n'est pas activé. Cliquez Activer, pointez le DNS du téléphone vers windc05.ar-systems.fr, naviguez, puis Charger.</sys:String>
   <sys:String x:Key="Stats.YoutubeCaveat">Limite importante : les pubs YouTube contournent souvent un blocage DNS pur (mêmes hôtes que le CDN vidéo). Les tops ci-dessous servent à vérifier que le hub enregistre bien des requêtes / domaines de listes — pas à garantir zéro pub mobile.</sys:String>
   <sys:String x:Key="Stats.TopQueried">Top domaines appelés</sys:String>
   <sys:String x:Key="Stats.TopBlocked">Top domaines bloqués</sys:String>

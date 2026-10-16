@@ -90,12 +90,22 @@ public partial class SetupWizardWindow : Window
     {
         if (_draft.DnsTargets.Count == 0 || _draft.DnsTargets.All(SetupWizardGate.IsLocalOnlyTarget))
         {
-            TargetsBox.Text = string.IsNullOrEmpty(_machineDomain)
-                ? "dns1.example.local"
-                : $"dns1.{_machineDomain}\ndns2.{_machineDomain}";
-            TargetsDomainHint.Text = string.IsNullOrEmpty(_machineDomain)
-                ? Loc.T("Wizard.Targets.SuggestGeneric")
-                : Loc.F("Wizard.Targets.SuggestDomain", _machineDomain);
+            // Prefer this machine when it hosts DNS Server (hub-on-DC); else suggest farm FQDNs.
+            if (LocalDnsTarget.IsDnsServerRunning())
+            {
+                var localName = LocalDnsTarget.GetPreferredLocalName();
+                TargetsBox.Text = localName;
+                TargetsDomainHint.Text = Loc.F("Wizard.Targets.SuggestLocal", localName);
+            }
+            else
+            {
+                TargetsBox.Text = string.IsNullOrEmpty(_machineDomain)
+                    ? "dns1.example.local"
+                    : $"dns1.{_machineDomain}\ndns2.{_machineDomain}";
+                TargetsDomainHint.Text = string.IsNullOrEmpty(_machineDomain)
+                    ? Loc.T("Wizard.Targets.SuggestGeneric")
+                    : Loc.F("Wizard.Targets.SuggestDomain", _machineDomain);
+            }
         }
         else
         {

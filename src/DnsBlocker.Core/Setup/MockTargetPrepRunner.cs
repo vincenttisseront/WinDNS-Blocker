@@ -74,4 +74,45 @@ public sealed class MockTargetPrepRunner : ITargetPrepRunner
             }
         });
     }
+
+    public Task<PrepareDnsTargetResult> PrepareLocalAsync(
+        string hostname,
+        CancellationToken cancellationToken = default)
+    {
+        LastHostname = hostname;
+        LastUsername = "(local)";
+        _lastPassword = "";
+        if (FailPrep)
+        {
+            return Task.FromResult(new PrepareDnsTargetResult
+            {
+                Ok = false,
+                Message = "Mock local prep failure",
+                Log = ["Local ACL failed (mock)"]
+            });
+        }
+
+        return Task.FromResult(new PrepareDnsTargetResult
+        {
+            Ok = true,
+            Message = "Local DNS prepared (mock, no WinRM).",
+            Log =
+            [
+                "Local path (no WinRM)",
+                "Module DnsServer OK",
+                "Probe QRP Add OK",
+                "Probe QRP Remove OK"
+            ],
+            Target = new PreparedTargetInfo
+            {
+                Hostname = hostname.Trim(),
+                Username = null,
+                Prepared = true,
+                PreparedAtUtc = DateTimeOffset.UtcNow,
+                HubIdentityGranted = "LocalSystem",
+                AddedToDnsAdmins = false,
+                LastProbeMessage = "OK"
+            }
+        });
+    }
 }

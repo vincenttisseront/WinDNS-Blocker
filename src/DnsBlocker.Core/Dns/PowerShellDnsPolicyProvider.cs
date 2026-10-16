@@ -2,14 +2,16 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using DnsBlocker.Core.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DnsBlocker.Core.Dns;
 
 /// <summary>
-/// Applies QRP via the DnsServer PowerShell module using -ComputerName remoting.
-/// Requires Windows + RSAT/DNS Server tools on the hub.
+/// Applies QRP via the DnsServer PowerShell module.
+/// Remote targets use <c>-ComputerName</c> (WinRM/CIM); local DNS targets omit it
+/// and talk to the in-box DNS Server on this machine.
 /// </summary>
 public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
 {
@@ -70,25 +72,46 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         if (!OperatingSystem.IsWindows())
             return [];
 
+        var isLocal = LocalDnsTarget.IsLocalTarget(computerName);
+        var localLiteral = isLocal ? "$true" : "$false";
+
         // Prefer IsEnabled when present; fall back to Enabled / IsDisabled shapes across OS builds.
+        // Local DNS: omit -ComputerName (no WinRM). Remote: keep -ComputerName remoting.
         var script = $$"""
             $ErrorActionPreference = 'Stop'
             Import-Module DnsServer -ErrorAction Stop
             $computer = '{{EscapePsString(computerName)}}'
             $prefix = '{{EscapePsString(policyNamePrefix)}}'
-            $rows = @(Get-DnsServerQueryResolutionPolicy -ComputerName $computer -ErrorAction Stop |
-              Where-Object { $_.Name -like ($prefix + '*') } |
-              ForEach-Object {
-                $enabled = $true
-                if ($null -ne $_.IsEnabled) { $enabled = [bool]$_.IsEnabled }
-                elseif ($null -ne $_.Enabled) { $enabled = [bool]$_.Enabled }
-                elseif ($null -ne $_.IsDisabled) { $enabled = -not [bool]$_.IsDisabled }
-                [pscustomobject]@{
-                  Name = $_.Name
-                  IsEnabled = $enabled
-                  Action = [string]$_.Action
-                }
-              })
+            $local = {{localLiteral}}
+            if ($local) {
+              $rows = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop |
+                Where-Object { $_.Name -like ($prefix + '*') } |
+                ForEach-Object {
+                  $enabled = $true
+                  if ($null -ne $_.IsEnabled) { $enabled = [bool]$_.IsEnabled }
+                  elseif ($null -ne $_.Enabled) { $enabled = [bool]$_.Enabled }
+                  elseif ($null -ne $_.IsDisabled) { $enabled = -not [bool]$_.IsDisabled }
+                  [pscustomobject]@{
+                    Name = $_.Name
+                    IsEnabled = $enabled
+                    Action = [string]$_.Action
+                  }
+                })
+            } else {
+              $rows = @(Get-DnsServerQueryResolutionPolicy -ComputerName $computer -ErrorAction Stop |
+                Where-Object { $_.Name -like ($prefix + '*') } |
+                ForEach-Object {
+                  $enabled = $true
+                  if ($null -ne $_.IsEnabled) { $enabled = [bool]$_.IsEnabled }
+                  elseif ($null -ne $_.Enabled) { $enabled = [bool]$_.Enabled }
+                  elseif ($null -ne $_.IsDisabled) { $enabled = -not [bool]$_.IsDisabled }
+                  [pscustomobject]@{
+                    Name = $_.Name
+                    IsEnabled = $enabled
+                    Action = [string]$_.Action
+                  }
+                })
+            }
             if ($rows.Count -eq 0) { '[]' } else { $rows | ConvertTo-Json -Compress }
             """;
 
@@ -98,7 +121,8 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
 
     /// <summary>
     /// Builds the single-session PowerShell that replaces all prefixed QRP policies.
-    /// Exposed for unit tests (script structure / 9971 retry).
+    /// Exposed for unit tests (script structure / 9971 retry / local vs remote).
+    /// Local targets omit <c>-ComputerName</c> (no WinRM).
     /// </summary>
     public static string BuildApplyScript(
         string computerName,
@@ -106,6 +130,7 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         string action,
         IReadOnlyList<IReadOnlyList<string>> chunks)
     {
+        var isLocal = LocalDnsTarget.IsLocalTarget(computerName);
         var sb = new StringBuilder();
         sb.AppendLine("""
             $ErrorActionPreference = 'Stop'
@@ -147,38 +172,62 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               return $false
             }
 
-            function Remove-DnsBlockerPolicies([string]$Computer, [string]$Prefix) {
+            function Remove-DnsBlockerPolicies([string]$Computer, [string]$Prefix, [bool]$Local) {
               $existing = @()
               try {
-                $existing = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -ErrorAction Stop |
-                  Where-Object { $_.Name -like ($Prefix + '*') })
+                if ($Local) {
+                  $existing = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop |
+                    Where-Object { $_.Name -like ($Prefix + '*') })
+                } else {
+                  $existing = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -ErrorAction Stop |
+                    Where-Object { $_.Name -like ($Prefix + '*') })
+                }
               } catch {
                 # Empty server / first run / transient list failure: treat as no policies
                 $existing = @()
               }
               foreach ($p in $existing) {
                 try {
-                  Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $p.Name -Force -ErrorAction Stop
+                  if ($Local) {
+                    Remove-DnsServerQueryResolutionPolicy -Name $p.Name -Force -ErrorAction Stop
+                  } else {
+                    Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $p.Name -Force -ErrorAction Stop
+                  }
                 } catch {
                   # Retry once after brief delay (replication / file lock)
                   Start-Sleep -Milliseconds 400
-                  Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $p.Name -Force -ErrorAction Stop
+                  if ($Local) {
+                    Remove-DnsServerQueryResolutionPolicy -Name $p.Name -Force -ErrorAction Stop
+                  } else {
+                    Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $p.Name -Force -ErrorAction Stop
+                  }
                 }
               }
             }
 
-            function Add-DnsBlockerPolicy([string]$Computer, [string]$Name, [string]$Action, [string]$Fqdn) {
+            function Add-DnsBlockerPolicy([string]$Computer, [string]$Name, [string]$Action, [string]$Fqdn, [bool]$Local) {
               # Server-level QRP (no -ApplyOnRecursion): matches incoming queries before recursion.
               # DENY → REFUSED; IGNORE → drop (MS blackhole examples). Prefer a single client DNS
               # so stubs do not fail over to 8.8.8.8 after REFUSED.
+              # Local: omit -ComputerName (in-process / local CIM — no WinRM).
               try {
-                Add-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Action $Action -Fqdn $Fqdn -ErrorAction Stop
+                if ($Local) {
+                  Add-DnsServerQueryResolutionPolicy -Name $Name -Action $Action -Fqdn $Fqdn -ErrorAction Stop
+                } else {
+                  Add-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Action $Action -Fqdn $Fqdn -ErrorAction Stop
+                }
               } catch {
                 if (Test-DnsBlockerPolicyAlreadyExists $_) {
                   # Stale / partial prior sync: force replace this chunk
-                  Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Force -ErrorAction SilentlyContinue
-                  Start-Sleep -Milliseconds 300
-                  Add-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Action $Action -Fqdn $Fqdn -ErrorAction Stop
+                  if ($Local) {
+                    Remove-DnsServerQueryResolutionPolicy -Name $Name -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Milliseconds 300
+                    Add-DnsServerQueryResolutionPolicy -Name $Name -Action $Action -Fqdn $Fqdn -ErrorAction Stop
+                  } else {
+                    Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Milliseconds 300
+                    Add-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -Action $Action -Fqdn $Fqdn -ErrorAction Stop
+                  }
                   return
                 }
                 throw
@@ -189,11 +238,12 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             """);
 
         sb.AppendLine($"$computer = '{EscapePsString(computerName)}'");
+        sb.AppendLine($"$local = {(isLocal ? "$true" : "$false")}");
         sb.AppendLine($"$prefix = '{EscapePsString(policyNamePrefix)}'");
         sb.AppendLine("$action = '" + EscapePsString(action) + "'");
         sb.AppendLine("""
             try {
-              Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix
+              Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix -Local $local
             } catch {
               Write-Error (Format-DnsBlockerError $_)
               exit 1
@@ -208,7 +258,7 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             sb.AppendLine($"$fqdn = '{EscapePsString(fqdn)}'");
             sb.AppendLine("""
                 try {
-                  Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn
+                  Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn -Local $local
                   Write-Output ("OK " + $name + " domains=" + (($fqdn -split ',').Count - 1))
                 } catch {
                   Write-Error (("Failed policy " + $name + " on " + $computer + " — ") + (Format-DnsBlockerError $_))
@@ -220,7 +270,11 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         // Cached answers bypass QRP — clear after replace so new DENY/IGNORE take effect immediately.
         sb.AppendLine("""
             try {
-              Clear-DnsServerCache -ComputerName $computer -Force -ErrorAction SilentlyContinue
+              if ($local) {
+                Clear-DnsServerCache -Force -ErrorAction SilentlyContinue
+              } else {
+                Clear-DnsServerCache -ComputerName $computer -Force -ErrorAction SilentlyContinue
+              }
               Write-Output 'CACHE_CLEARED'
             } catch {
               Write-Output ('CACHE_CLEAR_SKIPPED: ' + $_.Exception.Message)

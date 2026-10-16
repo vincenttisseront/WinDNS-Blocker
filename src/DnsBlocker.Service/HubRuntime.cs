@@ -2,6 +2,7 @@ using DnsBlocker.Core.Config;
 using DnsBlocker.Core.Dns;
 using DnsBlocker.Core.Logging;
 using DnsBlocker.Core.Models;
+using DnsBlocker.Core.Net;
 using DnsBlocker.Core.Security;
 using DnsBlocker.Core.Setup;
 using DnsBlocker.Core.Stats;
@@ -59,6 +60,13 @@ public sealed class HubRuntime
         _credentials = credentials;
         _preparedTargets = preparedTargets;
         _config = _configStore.Load();
+        // First-run / scaffold localhost: if this box has DNS Server running, default to local FQDN.
+        if (LocalDnsTarget.TryEnsureDefaultTargets(_config))
+        {
+            Normalize(_config);
+            _configStore.Save(_config);
+            _logs.Write($"Local DNS Server detected — DnsTargets defaulted to: {string.Join(", ", _config.DnsTargets)}");
+        }
     }
 
     public AppConfig GetConfig()
@@ -155,6 +163,7 @@ public sealed class HubRuntime
                 var row = new TargetPolicyStatus
                 {
                     Target = target,
+                    IsLocal = LocalDnsTarget.IsLocalTarget(target),
                     LastSyncStatus = sync?.Status ?? TargetSyncStatus.Idle,
                     LastSyncFinishedAt = sync?.FinishedAt,
                     LastSyncError = sync?.Error,
@@ -175,6 +184,7 @@ public sealed class HubRuntime
                 var row = new TargetPolicyStatus
                 {
                     Target = target,
+                    IsLocal = LocalDnsTarget.IsLocalTarget(target),
                     LastSyncStatus = sync?.Status ?? TargetSyncStatus.Idle,
                     LastSyncFinishedAt = sync?.FinishedAt,
                     LastSyncError = sync?.Error,
@@ -513,6 +523,76 @@ public sealed class HubRuntime
         _logs.Write($"WinRM test → {request.Hostname} (user={request.Username})");
         // Never log password
         return _targetPrep.TestWinRmAsync(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Detect local DNS Server, add preferred FQDN to DnsTargets, prepare via local PowerShell (no WinRM).
+    /// </summary>
+    public async Task<EnsureLocalDnsTargetResult> EnsureLocalDnsTargetAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var log = new List<string>();
+        if (!LocalDnsTarget.IsDnsServerRunning())
+        {
+            return new EnsureLocalDnsTargetResult
+            {
+                Ok = false,
+                DnsServerDetected = false,
+                Message = "No local DNS Server service detected (feature/service DNS not running).",
+                Log = ["DNS service not running or not installed on this machine."]
+            };
+        }
+
+        var hostname = LocalDnsTarget.GetPreferredLocalName();
+        log.Add($"Local DNS detected — preferred name: {hostname}");
+        _logs.Write($"Ensure local DNS target → {hostname}");
+
+        var prep = await _targetPrep.PrepareLocalAsync(hostname, cancellationToken).ConfigureAwait(false);
+        log.AddRange(prep.Log);
+
+        var cfg = GetConfig();
+        var before = cfg.DnsTargets.ToList();
+        LocalDnsTarget.EnsureInTargets(cfg);
+        var added = !before.Any(t => t.Equals(hostname, StringComparison.OrdinalIgnoreCase));
+        SetConfig(cfg);
+
+        if (prep.Ok && prep.Target is not null)
+        {
+            prep.Target.Hostname = hostname;
+            _preparedTargets.Upsert(prep.Target);
+        }
+        else if (prep.Ok)
+        {
+            _preparedTargets.Upsert(new PreparedTargetInfo
+            {
+                Hostname = hostname,
+                Prepared = true,
+                PreparedAtUtc = DateTimeOffset.UtcNow,
+                LastProbeMessage = prep.Message,
+                HubIdentityGranted = "local"
+            });
+        }
+
+        var ok = prep.Ok;
+        var message = ok
+            ? (added
+                ? $"Local DNS target added: {hostname} (prepared without WinRM)."
+                : $"Local DNS target ready: {hostname} (already in farm; prepared without WinRM).")
+            : $"Local DNS target '{hostname}' added to farm, but prepare failed: {prep.Message}";
+
+        // Still OK for "add" if we at least put it in the farm — prepare may fail under non-elevated tests.
+        // Prefer prep success for Ok flag so UI can show the probe result.
+        _logs.Write(message);
+        return new EnsureLocalDnsTargetResult
+        {
+            Ok = ok,
+            DnsServerDetected = true,
+            Hostname = hostname,
+            Message = message,
+            Log = log,
+            AddedToFarm = added || before.All(SetupWizardGate.IsLocalOnlyTarget),
+            Prepared = prep.Ok
+        };
     }
 
     public async Task<PrepareDnsTargetResult> PrepareDnsTargetAsync(

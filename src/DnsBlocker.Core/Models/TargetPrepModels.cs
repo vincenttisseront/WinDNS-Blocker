@@ -47,3 +47,17 @@ public sealed class PrepareDnsTargetResult
     public List<string> Log { get; set; } = [];
     public PreparedTargetInfo? Target { get; set; }
 }
+
+/// <summary>
+/// Result of detecting / adding / preparing the hub's own DNS Server (local, no WinRM).
+/// </summary>
+public sealed class EnsureLocalDnsTargetResult
+{
+    public bool Ok { get; set; }
+    public bool DnsServerDetected { get; set; }
+    public string? Hostname { get; set; }
+    public string Message { get; set; } = "";
+    public List<string> Log { get; set; } = [];
+    public bool AddedToFarm { get; set; }
+    public bool Prepared { get; set; }
+}

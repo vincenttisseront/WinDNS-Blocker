@@ -185,6 +185,12 @@ public sealed class IpcServer
                     return IpcResponse.Success(request.Id, result);
                 }
 
+                case IpcProtocol.MethodEnsureLocalDnsTarget:
+                {
+                    var result = await _runtime.EnsureLocalDnsTargetAsync(cancellationToken).ConfigureAwait(false);
+                    return IpcResponse.Success(request.Id, result);
+                }
+
                 case IpcProtocol.MethodGetPreparedTargets:
                     return IpcResponse.Success(request.Id, _runtime.GetPreparedTargets());
 

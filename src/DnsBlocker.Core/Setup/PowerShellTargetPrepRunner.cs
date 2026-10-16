@@ -238,6 +238,118 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
         return MapPrepResult(run, request);
     }
 
+    /// <summary>
+    /// Local DNS prepare: registry ACL + QRP probe on this machine — no WinRM, no credentials.
+    /// </summary>
+    public async Task<PrepareDnsTargetResult> PrepareLocalAsync(
+        string hostname,
+        CancellationToken cancellationToken = default)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return new PrepareDnsTargetResult
+            {
+                Ok = false,
+                Message = "Local DNS prepare requires Windows.",
+                Log = ["Non-Windows platform."]
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(hostname))
+        {
+            return new PrepareDnsTargetResult
+            {
+                Ok = false,
+                Message = "Hostname required for local prepare.",
+                Log = []
+            };
+        }
+
+        var script = """
+            $ErrorActionPreference = 'Stop'
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            $OutputEncoding = $utf8
+            [Console]::OutputEncoding = $utf8
+            $log = New-Object System.Collections.Generic.List[string]
+
+            function Emit($ok, $message, $hubIdentity) {
+              $obj = [ordered]@{
+                ok = [bool]$ok
+                message = [string]$message
+                log = @($log)
+                hubIdentity = $hubIdentity
+                addedToDnsAdmins = $false
+              }
+              $json = $obj | ConvertTo-Json -Compress -Depth 8
+              $bytes = $utf8.GetBytes($json + [Environment]::NewLine)
+              [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)
+            }
+
+            try {
+              [void]$log.Add('Local DNS prepare (no WinRM)')
+              Import-Module DnsServer -ErrorAction Stop
+              [void]$log.Add('Module DnsServer OK')
+
+              $svc = Get-Service -Name DNS -ErrorAction SilentlyContinue
+              if (-not $svc) { throw 'DNS Server service not installed on this machine.' }
+              if ($svc.Status -ne 'Running') { throw ('DNS Server service is ' + $svc.Status + ' (expected Running).') }
+              [void]$log.Add('Service DNS Running')
+
+              $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server'
+              if (-not (Test-Path $regPath)) {
+                New-Item -Path $regPath -Force | Out-Null
+                [void]$log.Add('DNS Server registry key created')
+              }
+
+              $hubIdentity = 'NT AUTHORITY\SYSTEM'
+              try {
+                $svcAccount = Get-CimInstance -ClassName Win32_Service -Filter "Name='DnsBlocker'" -ErrorAction SilentlyContinue
+                if ($svcAccount -and $svcAccount.StartName) {
+                  $start = [string]$svcAccount.StartName
+                  if ($start -notmatch 'LocalSystem|LocalService|NetworkService') {
+                    $hubIdentity = $start
+                  }
+                }
+              } catch { }
+
+              $rights = [System.Security.AccessControl.RegistryRights]::FullControl
+              $inherit = [System.Security.AccessControl.InheritanceFlags]([int]1 -bor [int]2)
+              $propagate = [System.Security.AccessControl.PropagationFlags]::None
+              $allow = [System.Security.AccessControl.AccessControlType]::Allow
+              $acl = Get-Acl -Path $regPath
+              $rule = New-Object System.Security.AccessControl.RegistryAccessRule ($hubIdentity, $rights, $inherit, $propagate, $allow)
+              $acl.AddAccessRule($rule)
+              Set-Acl -Path $regPath -AclObject $acl
+              [void]$log.Add('ACL Full Control granted to ' + $hubIdentity)
+
+              $probe = 'DnsBlocker_Probe_' + [guid]::NewGuid().ToString('N').Substring(0,8)
+              Add-DnsServerQueryResolutionPolicy -Name $probe -Action DENY -Fqdn 'EQ,probe.invalid.dnsblocker.local' -ErrorAction Stop
+              [void]$log.Add('Probe QRP Add OK (' + $probe + ')')
+              Remove-DnsServerQueryResolutionPolicy -Name $probe -Force -ErrorAction Stop
+              [void]$log.Add('Probe QRP Remove OK')
+
+              Emit $true 'Local DNS prepared. Sync can use the hub service account (no WinRM).' $hubIdentity
+              exit 0
+            } catch {
+              $msg = $_.Exception.Message
+              if ($_.FullyQualifiedErrorId) { $msg = $msg + ' | FQID=' + $_.FullyQualifiedErrorId }
+              [void]$log.Add($msg)
+              Emit $false $msg $null
+              exit 2
+            }
+            """;
+
+        var run = await RunScriptAsync(script, hostname.Trim(), "", "", cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapPrepResult(run, new PrepareDnsTargetRequest
+        {
+            Hostname = hostname.Trim(),
+            Username = "",
+            Password = ""
+        });
+    }
+
     public static TargetWinRmTestResult MapWinRmResult(PowerShellRunResult run)
     {
         var parsed = TryParseJson<WinRmJson>(run.Stdout);

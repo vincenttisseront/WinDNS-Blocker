@@ -20,12 +20,34 @@ public class PowerShellDnsPolicyProviderTests
         Assert.Contains("windc05.ar-systems.fr", script, StringComparison.Ordinal);
         Assert.Contains("Clear-DnsServerCache", script, StringComparison.Ordinal);
 
-        var removeIdx = script.IndexOf("Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix", StringComparison.Ordinal);
-        var addIdx = script.IndexOf("Add-DnsBlockerPolicy -Computer $computer -Name $name", StringComparison.Ordinal);
+        var removeIdx = script.IndexOf(
+            "Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix -Local $local",
+            StringComparison.Ordinal);
+        var addIdx = script.IndexOf(
+            "Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn -Local $local",
+            StringComparison.Ordinal);
         var cacheIdx = script.IndexOf("Clear-DnsServerCache", StringComparison.Ordinal);
         Assert.True(removeIdx >= 0);
         Assert.True(addIdx > removeIdx, "Clean replace must remove all DnsBlocker_* before recreating chunks.");
         Assert.True(cacheIdx > addIdx, "DNS cache clear must run after policy recreate.");
+        Assert.Contains("$local = $false", script, StringComparison.Ordinal);
+        Assert.Contains("Add-DnsServerQueryResolutionPolicy -ComputerName $Computer", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildApplyScript_LocalTarget_SetsLocalFlagAndLocalCmdletForms()
+    {
+        var script = PowerShellDnsPolicyProvider.BuildApplyScript(
+            "localhost",
+            "DnsBlocker_",
+            "IGNORE",
+            [["ads.example.com"]]);
+
+        Assert.Contains("$local = $true", script, StringComparison.Ordinal);
+        Assert.Contains("Add-DnsServerQueryResolutionPolicy -Name $Name -Action $Action -Fqdn $Fqdn", script, StringComparison.Ordinal);
+        Assert.Contains("Remove-DnsServerQueryResolutionPolicy -Name $p.Name -Force", script, StringComparison.Ordinal);
+        Assert.Contains("Clear-DnsServerCache -Force -ErrorAction SilentlyContinue", script, StringComparison.Ordinal);
+        Assert.Contains("Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn -Local $local", script, StringComparison.Ordinal);
     }
 
     [Fact]

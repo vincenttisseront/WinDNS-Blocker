@@ -72,6 +72,7 @@
                       Margin="0,0,0,16">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Server}" Binding="{Binding Target}" Width="2*"/>
+                <DataGridTextColumn Header="{DynamicResource Status.Col.Kind}" Binding="{Binding Kind}" Width="*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.SyncStatus}" Binding="{Binding Status}" Width="*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.PoliciesSync}" Binding="{Binding PolicyCount}" Width="*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Duration}" Binding="{Binding Duration}" Width="*"/>
@@ -87,6 +88,7 @@
                       Margin="0,0,0,8">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Server}" Binding="{Binding Target}" Width="2*"/>
+                <DataGridTextColumn Header="{DynamicResource Status.Col.Kind}" Binding="{Binding Kind}" Width="*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Applied}" Binding="{Binding AppliedLabel}" Width="*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Installed}" Binding="{Binding LivePolicyCount}" Width="*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Enabled}" Binding="{Binding LiveEnabledCount}" Width="*"/>
@@ -208,8 +210,11 @@
                 <TextBlock Text="{DynamicResource Cfg.FarmHint}"
                            Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                 <TextBox x:Name="TargetsBox" AcceptsReturn="True" Height="120" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+                <TextBlock Text="{DynamicResource Cfg.AddLocalDnsHint}"
+                           Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                   <Button Content="{DynamicResource Btn.SaveConfig}" Click="SaveConfig_Click"/>
+                  <Button Content="{DynamicResource Btn.AddLocalDns}" Click="AddLocalDns_Click"/>
                   <Button Content="{DynamicResource Btn.PrepareTarget}" Click="TargetWizard_Click"/>
                 </StackPanel>
                 <TextBlock x:Name="PreparedTargetsSummary" Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
