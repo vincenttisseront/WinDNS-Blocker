@@ -1,0 +1,180 @@
+<Window x:Class="DnsBlocker.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WinDNS Blocker"
+        Height="720" Width="1080"
+        MinHeight="560" MinWidth="860"
+        Background="{StaticResource BgBrush}"
+        FontFamily="Segoe UI"
+        FontSize="13">
+  <DockPanel Margin="16">
+    <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="WinDNS Blocker" FontSize="22" FontWeight="SemiBold" Foreground="#123"/>
+          <TextBlock Text="Hub unique → politiques QRP sur X serveurs DNS" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Content="Actualiser" Click="Refresh_Click"/>
+          <Button Content="Mettre à jour maintenant" Click="ApplyNow_Click" FontWeight="SemiBold"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <TabControl Background="Transparent" BorderThickness="0">
+      <TabItem Header="Statut">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
+          <StackPanel>
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
+              <StackPanel>
+                <TextBlock x:Name="StatusSummary" Text="Connexion au service…" FontWeight="SemiBold"/>
+                <TextBlock x:Name="StatusDetails" Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
+            <TextBlock Text="Statut par serveur DNS" FontWeight="SemiBold" Margin="0,0,0,8"/>
+            <DataGrid x:Name="TargetsGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                      CanUserAddRows="False" GridLinesVisibility="Horizontal" BorderBrush="{StaticResource BorderBrushKey}">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Serveur" Binding="{Binding Target}" Width="2*"/>
+                <DataGridTextColumn Header="Statut" Binding="{Binding Status}" Width="*"/>
+                <DataGridTextColumn Header="Politiques" Binding="{Binding PolicyCount}" Width="*"/>
+                <DataGridTextColumn Header="Durée" Binding="{Binding Duration}" Width="*"/>
+                <DataGridTextColumn Header="Erreur" Binding="{Binding Error}" Width="3*"/>
+              </DataGrid.Columns>
+            </DataGrid>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="Configuration">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
+          <StackPanel>
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
+              <StackPanel>
+                <TextBlock Text="Sources de listes" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Text="URL blocklists.txt (liste de listes)" Foreground="{StaticResource MutedBrush}"/>
+                <TextBox x:Name="BlocklistsUrlBox"/>
+                <TextBlock Text="URL whitelists.txt" Foreground="{StaticResource MutedBrush}"/>
+                <TextBox x:Name="WhitelistsUrlBox"/>
+                <TextBlock Text="regex.txt (non supporté par Windows DNS QRP — informatif)" Foreground="{StaticResource MutedBrush}"/>
+                <TextBox x:Name="RegexUrlBox" IsReadOnly="True" Opacity="0.7"/>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Margin="0,0,8,0">
+                    <TextBlock Text="Action QRP" Foreground="{StaticResource MutedBrush}"/>
+                    <ComboBox x:Name="ActionBox">
+                      <ComboBoxItem Content="DENY"/>
+                      <ComboBoxItem Content="IGNORE"/>
+                    </ComboBox>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                    <TextBlock Text="Taille de paquet FQDN" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBox x:Name="ChunkSizeBox"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Text="Parallélisme cibles" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBox x:Name="ParallelBox"/>
+                  </StackPanel>
+                </Grid>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Margin="0,0,8,0">
+                    <TextBlock Text="Heure sync quotidienne (locale)" Foreground="{StaticResource MutedBrush}"/>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBox x:Name="HourBox" Width="60" Margin="0,0,8,0"/>
+                      <TextBlock Text=":" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                      <TextBox x:Name="MinuteBox" Width="60"/>
+                    </StackPanel>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="0,0,0,8">
+                    <CheckBox x:Name="StatsCheck" Content="Activer la collecte de stats (ETW DNS)" Margin="0,0,0,8"/>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
+              <StackPanel>
+                <TextBlock Text="Farm DNS (cibles du hub)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Text="Un hostname / FQDN par ligne. Le service pousse les politiques vers chaque cible via WinRM." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                <TextBox x:Name="TargetsBox" AcceptsReturn="True" Height="120" VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                  <Button Content="Enregistrer la configuration" Click="SaveConfig_Click"/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="Domaines">
+        <DockPanel Margin="0,12,0,0">
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBox x:Name="DomainSearchBox" Width="320" Margin="0,0,8,0"/>
+            <Button Content="Rechercher" Click="SearchDomains_Click"/>
+          </StackPanel>
+          <ListBox x:Name="DomainsList" BorderBrush="{StaticResource BorderBrushKey}"/>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="Logs">
+        <TextBox x:Name="LogsBox" Margin="0,12,0,0" IsReadOnly="True" AcceptsReturn="True"
+                 VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
+                 FontFamily="Consolas" Background="{StaticResource PanelBrush}"/>
+      </TabItem>
+
+      <TabItem Header="Stats">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
+          <StackPanel>
+            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushKey}" BorderThickness="1" CornerRadius="6" Padding="16" Margin="0,0,0,12">
+              <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="Période (heures) :" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                  <TextBox x:Name="StatsHoursBox" Width="60" Text="24" Margin="0,0,8,0"/>
+                  <Button Content="Charger" Click="LoadStats_Click"/>
+                </StackPanel>
+                <TextBlock x:Name="StatsSummary" Margin="0,12,0,0" TextWrapping="Wrap"/>
+                <TextBlock x:Name="StatsMessage" Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel Margin="0,0,8,0">
+                <TextBlock Text="Top domaines bloqués" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <DataGrid x:Name="TopBlockedGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserAddRows="False">
+                  <DataGrid.Columns>
+                    <DataGridTextColumn Header="Domaine" Binding="{Binding Key}" Width="3*"/>
+                    <DataGridTextColumn Header="Hits" Binding="{Binding Count}" Width="*"/>
+                  </DataGrid.Columns>
+                </DataGrid>
+              </StackPanel>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="Top clients" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <DataGrid x:Name="TopClientsGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserAddRows="False">
+                  <DataGrid.Columns>
+                    <DataGridTextColumn Header="Client" Binding="{Binding Key}" Width="3*"/>
+                    <DataGridTextColumn Header="Hits" Binding="{Binding Count}" Width="*"/>
+                  </DataGrid.Columns>
+                </DataGrid>
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>

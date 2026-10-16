@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{537F4380-26FE-42C6-9396-C41D3514206C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DnsBlocker.Core", "src\DnsBlocker.Core\DnsBlocker.Core.csproj", "{6BAC4B16-7069-4072-AA69-5DE3F072E9AD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DnsBlocker.Service", "src\DnsBlocker.Service\DnsBlocker.Service.csproj", "{C3EF8C36-9148-4527-86E8-937DE13B799D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{D5BB5981-0421-43C0-818F-3F3FA4DF7B1C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DnsBlocker.Core.Tests", "tests\DnsBlocker.Core.Tests\DnsBlocker.Core.Tests.csproj", "{F213D8FB-D0CA-46F1-B66A-463D9AC94B10}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DnsBlocker.UI", "src\DnsBlocker.UI\DnsBlocker.UI.csproj", "{BA21127E-D69A-4324-BA69-A8D9D84A3C7C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6BAC4B16-7069-4072-AA69-5DE3F072E9AD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6BAC4B16-7069-4072-AA69-5DE3F072E9AD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6BAC4B16-7069-4072-AA69-5DE3F072E9AD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6BAC4B16-7069-4072-AA69-5DE3F072E9AD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C3EF8C36-9148-4527-86E8-937DE13B799D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C3EF8C36-9148-4527-86E8-937DE13B799D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C3EF8C36-9148-4527-86E8-937DE13B799D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C3EF8C36-9148-4527-86E8-937DE13B799D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F213D8FB-D0CA-46F1-B66A-463D9AC94B10}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F213D8FB-D0CA-46F1-B66A-463D9AC94B10}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F213D8FB-D0CA-46F1-B66A-463D9AC94B10}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F213D8FB-D0CA-46F1-B66A-463D9AC94B10}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BA21127E-D69A-4324-BA69-A8D9D84A3C7C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BA21127E-D69A-4324-BA69-A8D9D84A3C7C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BA21127E-D69A-4324-BA69-A8D9D84A3C7C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BA21127E-D69A-4324-BA69-A8D9D84A3C7C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{6BAC4B16-7069-4072-AA69-5DE3F072E9AD} = {537F4380-26FE-42C6-9396-C41D3514206C}
+		{C3EF8C36-9148-4527-86E8-937DE13B799D} = {537F4380-26FE-42C6-9396-C41D3514206C}
+		{F213D8FB-D0CA-46F1-B66A-463D9AC94B10} = {D5BB5981-0421-43C0-818F-3F3FA4DF7B1C}
+		{BA21127E-D69A-4324-BA69-A8D9D84A3C7C} = {537F4380-26FE-42C6-9396-C41D3514206C}
+	EndGlobalSection
+EndGlobal

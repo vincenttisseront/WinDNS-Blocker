@@ -1,0 +1,2 @@
+# Sample list-of-lists for offline docs
+https://example.invalid/domains.txt
