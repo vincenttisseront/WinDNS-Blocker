@@ -20,6 +20,7 @@ public static class IpcProtocol
     public const string MethodApplyNow = "ApplyNow";
     public const string MethodSearchDomains = "SearchDomains";
     public const string MethodGetStats = "GetStats";
+    public const string MethodGetTargetPolicyStatus = "GetTargetPolicyStatus";
     public const string MethodGetAppVersion = "GetAppVersion";
     public const string MethodCheckForUpdates = "CheckForUpdates";
     public const string MethodInstallUpdate = "InstallUpdate";
@@ -63,6 +64,9 @@ public sealed class GetStatsParams
 {
     /// <summary>Hours lookback, default 24.</summary>
     public int Hours { get; set; } = 24;
+
+    /// <summary>Top-N domains/clients (10 or 20 typical). Default 20.</summary>
+    public int TopN { get; set; } = 20;
 }
 
 public sealed class SetConfigParams

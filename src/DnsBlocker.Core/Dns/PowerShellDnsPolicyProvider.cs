@@ -66,30 +66,75 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         string policyNamePrefix,
         CancellationToken cancellationToken = default)
     {
+        var policies = await ListPoliciesAsync(computerName, policyNamePrefix, cancellationToken)
+            .ConfigureAwait(false);
+        return policies.Select(p => p.Name).ToList();
+    }
+
+    public async Task<IReadOnlyList<DnsPolicyInfo>> ListPoliciesAsync(
+        string computerName,
+        string policyNamePrefix,
+        CancellationToken cancellationToken = default)
+    {
         if (!OperatingSystem.IsWindows())
             return [];
 
+        // Prefer IsEnabled when present; fall back to Enabled / IsDisabled shapes across OS builds.
         var script = $$"""
             $ErrorActionPreference = 'Stop'
             Import-Module DnsServer -ErrorAction Stop
             $computer = '{{EscapePsString(computerName)}}'
             $prefix = '{{EscapePsString(policyNamePrefix)}}'
-            $names = @(Get-DnsServerQueryResolutionPolicy -ComputerName $computer -ErrorAction SilentlyContinue |
+            $rows = @(Get-DnsServerQueryResolutionPolicy -ComputerName $computer -ErrorAction Stop |
               Where-Object { $_.Name -like ($prefix + '*') } |
-              Select-Object -ExpandProperty Name)
-            $names | ConvertTo-Json -Compress
+              ForEach-Object {
+                $enabled = $true
+                if ($null -ne $_.IsEnabled) { $enabled = [bool]$_.IsEnabled }
+                elseif ($null -ne $_.Enabled) { $enabled = [bool]$_.Enabled }
+                elseif ($null -ne $_.IsDisabled) { $enabled = -not [bool]$_.IsDisabled }
+                [pscustomobject]@{
+                  Name = $_.Name
+                  IsEnabled = $enabled
+                  Action = [string]$_.Action
+                }
+              })
+            if ($rows.Count -eq 0) { '[]' } else { $rows | ConvertTo-Json -Compress }
             """;
 
         var output = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
+        return ParsePolicyInventory(output);
+    }
+
+    public static IReadOnlyList<DnsPolicyInfo> ParsePolicyInventory(string? output)
+    {
         if (string.IsNullOrWhiteSpace(output))
             return [];
 
         output = output.Trim();
-        if (output.StartsWith('['))
-            return JsonSerializer.Deserialize<List<string>>(output) ?? [];
-        if (output.StartsWith('"'))
-            return [JsonSerializer.Deserialize<string>(output) ?? output.Trim('"')];
-        return [output];
+        // PowerShell may emit banner lines before JSON — keep the last JSON-looking segment.
+        var jsonStart = output.LastIndexOf('[');
+        var objStart = output.LastIndexOf('{');
+        if (jsonStart < 0 && objStart < 0)
+            return [];
+
+        if (jsonStart >= 0 && (objStart < 0 || jsonStart < objStart))
+            output = output[jsonStart..];
+        else if (objStart >= 0)
+            output = output[objStart..];
+
+        var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        try
+        {
+            if (output.StartsWith('['))
+                return JsonSerializer.Deserialize<List<DnsPolicyInfo>>(output, opts) ?? [];
+
+            var single = JsonSerializer.Deserialize<DnsPolicyInfo>(output, opts);
+            return single is null ? [] : [single];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private async Task<string> RunPowerShellAsync(string script, CancellationToken cancellationToken)

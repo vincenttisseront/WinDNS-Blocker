@@ -410,6 +410,52 @@ public partial class MainWindow : Window
             MessageBox.Show(ex.Message, "Erreur stats", MessageBoxButton.OK, MessageBoxImage.Error);
             RefreshLogsView();
         }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private void BindStats(StatsSnapshot stats)
+    {
+        StatsSummary.Text =
+            $"Requêtes : {stats.TotalQueries} — Bloquées : {stats.BlockedQueries}" +
+            $" — Top {stats.TopN} (UTC {stats.FromUtc:g} → {stats.ToUtc:g})";
+        StatsMessage.Text = stats.Message ?? "";
+        TopQueriedGrid.ItemsSource = stats.TopQueriedDomains;
+        TopBlockedGrid.ItemsSource = stats.TopBlockedDomains;
+        TopClientsGrid.ItemsSource = stats.TopClients;
+    }
+
+    private void BindPolicyProbe(TargetPolicyStatusResult? probe)
+    {
+        if (probe is null || probe.Targets.Count == 0)
+        {
+            PolicyStatusGrid.ItemsSource = null;
+            PolicyProbeSummary.Text = probe?.Message
+                ?? "Aucune sonde encore — cliquez « Vérifier les politiques QRP ».";
+            return;
+        }
+
+        PolicyStatusGrid.ItemsSource = probe.Targets;
+        var ok = probe.Targets.Count(t => t.AppliedOk);
+        var fail = probe.Targets.Count(t => !t.ProbeOk);
+        PolicyProbeSummary.Text =
+            $"Dernière sonde UTC : {probe.CheckedAt:u} — {ok}/{probe.Targets.Count} cible(s) « Appliquées »" +
+            (fail > 0 ? $", {fail} sonde(s) en échec" : "") +
+            (string.IsNullOrWhiteSpace(probe.Message) ? "" : " — " + probe.Message);
+    }
+
+    private void RenderActionLogs(IEnumerable<string>? serviceLogs = null)
+    {
+        var text = _journal.Render(serviceLogs);
+        LogsBox.Text = text;
+        StatusActionLogBox.Text = string.Join(Environment.NewLine, _journal.Lines.TakeLast(12));
+        StatsActionLogBox.Text = string.Join(Environment.NewLine,
+            _journal.Lines.Where(l => l.Contains("[UI] Stats", StringComparison.Ordinal)
+                                      || l.Contains("Stats :", StringComparison.Ordinal)
+                                      || l.Contains("Stats erreur", StringComparison.Ordinal))
+                .TakeLast(8));
     }
 
     private async Task RefreshAsync(bool checkUpdatesOnStartup = false)
@@ -420,6 +466,8 @@ public partial class MainWindow : Window
         var probe = ServiceProcessHelper.Probe();
         try
         {
+            SetBusy(true, "Actualisation…");
+            _journal.Write("Actualisation du statut");
             try
             {
                 var ver = await _client.GetAppVersionAsync().ConfigureAwait(true);

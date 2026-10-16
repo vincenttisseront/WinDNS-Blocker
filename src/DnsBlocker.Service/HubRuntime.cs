@@ -1,4 +1,5 @@
 using DnsBlocker.Core.Config;
+using DnsBlocker.Core.Dns;
 using DnsBlocker.Core.Logging;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Security;
@@ -17,6 +18,7 @@ public sealed class HubRuntime
 {
     private readonly ConfigStore _configStore;
     private readonly SyncEngine _syncEngine;
+    private readonly IDnsPolicyProvider _dnsProvider;
     private readonly StateStore _state;
     private readonly FileLogBuffer _logs;
     private readonly DnsStatsCollector _stats;
@@ -27,12 +29,15 @@ public sealed class HubRuntime
     private readonly PreparedTargetStore _preparedTargets;
     private readonly object _configGate = new();
     private readonly object _updateGate = new();
+    private readonly object _probeGate = new();
     private AppConfig _config;
     private UpdateCheckResult? _lastUpdateCheck;
+    private TargetPolicyStatusResult? _lastPolicyProbe;
 
     public HubRuntime(
         ConfigStore configStore,
         SyncEngine syncEngine,
+        IDnsPolicyProvider dnsProvider,
         StateStore state,
         FileLogBuffer logs,
         DnsStatsCollector stats,
@@ -44,6 +49,7 @@ public sealed class HubRuntime
     {
         _configStore = configStore;
         _syncEngine = syncEngine;
+        _dnsProvider = dnsProvider;
         _state = state;
         _logs = logs;
         _stats = stats;
@@ -102,6 +108,10 @@ public sealed class HubRuntime
 
     public ServiceStatus GetStatus(DateTimeOffset? nextScheduledUtc)
     {
+        TargetPolicyStatusResult? lastProbe;
+        lock (_probeGate)
+            lastProbe = _lastPolicyProbe;
+
         return new ServiceStatus
         {
             IsSyncing = _syncEngine.IsSyncing,
@@ -110,19 +120,100 @@ public sealed class HubRuntime
             ActiveDomainCount = _state.CountDomains(),
             RecentLogs = _logs.GetRecent(80).ToList(),
             StatsEnabled = _stats.IsEnabled,
-            StatsMessage = _stats.Message
+            StatsMessage = _stats.Message,
+            LastPolicyProbe = lastProbe
         };
+    }
+
+    /// <summary>
+    /// Probes each configured DNS target with Get-DnsServerQueryResolutionPolicy and
+    /// merges the live inventory with the last sync result (sync success ≠ policies installed).
+    /// </summary>
+    public async Task<TargetPolicyStatusResult> GetTargetPolicyStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var config = GetConfig();
+        var lastSync = _state.LoadLastSync();
+        var syncByTarget = (lastSync?.Targets ?? [])
+            .ToDictionary(t => t.Target, t => t, StringComparer.OrdinalIgnoreCase);
+
+        var checkedAt = DateTimeOffset.UtcNow;
+        var results = new List<TargetPolicyStatus>();
+        _logs.Write($"Policy probe started for {config.DnsTargets.Count} target(s)");
+
+        foreach (var target in config.DnsTargets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            syncByTarget.TryGetValue(target, out var sync);
+
+            try
+            {
+                var policies = await _dnsProvider
+                    .ListPoliciesAsync(target, config.PolicyNamePrefix, cancellationToken)
+                    .ConfigureAwait(false);
+                var enabled = policies.Count(p => p.IsEnabled);
+                var row = new TargetPolicyStatus
+                {
+                    Target = target,
+                    LastSyncStatus = sync?.Status ?? TargetSyncStatus.Idle,
+                    LastSyncFinishedAt = sync?.FinishedAt,
+                    LastSyncError = sync?.Error,
+                    LastSyncPolicyCount = sync?.PolicyCount ?? 0,
+                    LivePolicyCount = policies.Count,
+                    LiveEnabledCount = enabled,
+                    LivePolicyNames = policies.Select(p => p.Name).ToList(),
+                    ProbeOk = true,
+                    CheckedAt = checkedAt
+                };
+                results.Add(row);
+                _logs.Write(
+                    $"Policy probe OK: {target} — {policies.Count} installée(s), {enabled} activée(s)" +
+                    $" (sync: {row.LastSyncStatus}, {row.LastSyncPolicyCount}) → {row.AppliedLabel}");
+            }
+            catch (Exception ex)
+            {
+                var row = new TargetPolicyStatus
+                {
+                    Target = target,
+                    LastSyncStatus = sync?.Status ?? TargetSyncStatus.Idle,
+                    LastSyncFinishedAt = sync?.FinishedAt,
+                    LastSyncError = sync?.Error,
+                    LastSyncPolicyCount = sync?.PolicyCount ?? 0,
+                    ProbeOk = false,
+                    ProbeError = ex.Message,
+                    CheckedAt = checkedAt
+                };
+                results.Add(row);
+                _logs.Write($"Policy probe FAIL: {target} — {ex.Message}");
+            }
+        }
+
+        var result = new TargetPolicyStatusResult
+        {
+            CheckedAt = checkedAt,
+            Targets = results,
+            Message = results.Count == 0
+                ? "Aucune cible DNS configurée."
+                : null
+        };
+
+        lock (_probeGate)
+            _lastPolicyProbe = result;
+
+        return result;
     }
 
     public IReadOnlyList<string> SearchDomains(string? query, int limit) =>
         _state.SearchDomains(query, Math.Clamp(limit, 1, 1000));
 
-    public StatsSnapshot GetStats(int hours)
+    public StatsSnapshot GetStats(int hours, int topN = 20)
     {
         hours = Math.Clamp(hours, 1, 24 * 30);
+        topN = Math.Clamp(topN, 1, 100);
+
         var to = DateTimeOffset.UtcNow;
         var from = to.AddHours(-hours);
-        var snap = _state.GetStats(from, to);
+        var snap = _state.GetStats(from, to, topN);
         if (!_stats.IsEnabled && snap.Message is null)
         {
             return new StatsSnapshot
@@ -131,6 +222,8 @@ public sealed class HubRuntime
                 ToUtc = snap.ToUtc,
                 TotalQueries = snap.TotalQueries,
                 BlockedQueries = snap.BlockedQueries,
+                TopN = snap.TopN,
+                TopQueriedDomains = snap.TopQueriedDomains,
                 TopBlockedDomains = snap.TopBlockedDomains,
                 TopClients = snap.TopClients,
                 Message = _stats.Message

@@ -33,8 +33,14 @@ public sealed class IpcClient : IAsyncDisposable
     public Task<List<string>> SearchDomainsAsync(string? query, int limit = 100, CancellationToken cancellationToken = default) =>
         InvokeAsync<List<string>>(IpcProtocol.MethodSearchDomains, new SearchDomainsParams { Query = query, Limit = limit }, cancellationToken);
 
-    public Task<StatsSnapshot> GetStatsAsync(int hours = 24, CancellationToken cancellationToken = default) =>
-        InvokeAsync<StatsSnapshot>(IpcProtocol.MethodGetStats, new GetStatsParams { Hours = hours }, cancellationToken);
+    public Task<StatsSnapshot> GetStatsAsync(int hours = 24, int topN = 20, CancellationToken cancellationToken = default) =>
+        InvokeAsync<StatsSnapshot>(
+            IpcProtocol.MethodGetStats,
+            new GetStatsParams { Hours = hours, TopN = topN },
+            cancellationToken);
+
+    public Task<TargetPolicyStatusResult> GetTargetPolicyStatusAsync(CancellationToken cancellationToken = default) =>
+        InvokeAsync<TargetPolicyStatusResult>(IpcProtocol.MethodGetTargetPolicyStatus, null, cancellationToken);
 
     public Task<AppVersionResult> GetAppVersionAsync(CancellationToken cancellationToken = default) =>
         InvokeAsync<AppVersionResult>(IpcProtocol.MethodGetAppVersion, null, cancellationToken);

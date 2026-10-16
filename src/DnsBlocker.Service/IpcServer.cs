@@ -118,7 +118,13 @@ public sealed class IpcServer
                 case IpcProtocol.MethodGetStats:
                 {
                     var p = request.Params?.Deserialize<GetStatsParams>(IpcProtocol.JsonOptions) ?? new GetStatsParams();
-                    return IpcResponse.Success(request.Id, _runtime.GetStats(p.Hours));
+                    return IpcResponse.Success(request.Id, _runtime.GetStats(p.Hours, p.TopN));
+                }
+
+                case IpcProtocol.MethodGetTargetPolicyStatus:
+                {
+                    var result = await _runtime.GetTargetPolicyStatusAsync(cancellationToken).ConfigureAwait(false);
+                    return IpcResponse.Success(request.Id, result);
                 }
 
                 case IpcProtocol.MethodGetAppVersion:
