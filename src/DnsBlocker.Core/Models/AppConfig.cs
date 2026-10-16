@@ -45,4 +45,10 @@ public sealed class AppConfig
     /// When false, only notify (UI / logs).
     /// </summary>
     public bool AutoInstallUpdates { get; set; } = false;
+
+    /// <summary>
+    /// True after the user completes (or skips) the first-run setup wizard.
+    /// Mirrored by ProgramData setup-complete.flag for install-worker coordination.
+    /// </summary>
+    public bool SetupWizardCompleted { get; set; } = false;
 }
