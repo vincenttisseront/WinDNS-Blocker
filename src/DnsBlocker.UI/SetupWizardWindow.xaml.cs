@@ -4,6 +4,7 @@ using DnsBlocker.Core.Ipc;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
 using DnsBlocker.Core.Setup;
+using DnsBlocker.Core.Updates;
 
 namespace DnsBlocker.UI;
 
@@ -112,7 +113,9 @@ public partial class SetupWizardWindow : Window
             ? new AppConfig().WhitelistsUrl
             : _draft.WhitelistsUrl;
         ActionBox.SelectedIndex = _draft.PolicyAction.Equals("IGNORE", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        UpdateFeedUrlBox.Text = _draft.UpdateFeedUrl ?? "";
+        UpdateFeedUrlBox.Text = string.IsNullOrWhiteSpace(_draft.UpdateFeedUrl)
+            ? UpdateFeedUrls.DefaultPublicFeedUrl
+            : _draft.UpdateFeedUrl;
         CheckUpdatesOnStartupBox.IsChecked = _draft.CheckUpdatesOnStartup;
     }
 

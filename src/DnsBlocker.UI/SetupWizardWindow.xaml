@@ -72,12 +72,12 @@
       <!-- 3 Updates -->
       <StackPanel x:Name="StepUpdates" Visibility="Collapsed">
         <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
-                   Text="Flux de mise à jour optionnel (version.json). Laissez vide pour désactiver."/>
+                   Text="Flux de mise à jour (version.json). Prérempli avec le flux GitHub public « latest ». Effacez pour désactiver."/>
         <TextBlock Text="URL version.json" Foreground="{StaticResource MutedBrush}"/>
         <TextBox x:Name="UpdateFeedUrlBox"/>
         <CheckBox x:Name="CheckUpdatesOnStartupBox" Content="Vérifier les mises à jour au démarrage" Margin="0,12,0,4" IsChecked="True"/>
         <TextBlock Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"
-                   Text="Exemple GitHub Releases : https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json"/>
+                   Text="URL stable : https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json"/>
       </StackPanel>
 
       <!-- 4 Confirm -->
