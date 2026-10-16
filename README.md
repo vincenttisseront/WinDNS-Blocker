@@ -74,7 +74,16 @@ The MSI installs:
 
 Point `UpdateFeedUrl` in config (or the Configuration tab) at a published `version.json`. The service checks about daily; if `AutoInstallUpdates` is true it runs silent `msiexec /i … /qn` as LocalSystem (MSI ServiceControl stops/restarts the hub — do not stop the service yourself). With auto-install off, the UI notifies only (`Vérifier les mises à jour` / startup check). IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
 
-**Linux limitation:** `./scripts/build.sh` / `build-release.ps1` can publish the Service for `win-x64` and leave WiX sources ready, but **MSI compilation and WPF UI publish require Windows**.
+**Linux MSI (wixl):** on this Cloud Agent / Ubuntu you can also produce an installable MSI without WiX Toolset:
+
+```bash
+./scripts/build-msi-linux.sh 1.0.0
+# → artifacts/DnsBlocker-1.0.0.msi + artifacts/version.json
+```
+
+Requires `wixl` (`apt install wixl`). This is self-contained win-x64 (service + UI). Prefer `build-release.ps1` on Windows when you need a WiX Toolset 5 MSI identical to the installer project.
+
+**Linux limitation (WiX 5):** `build-release.ps1` skips official WiX Toolset MSI compilation on non-Windows hosts.
 
 ## Install (hub)
 
