@@ -1,3 +1,5 @@
+using DnsBlocker.Core.Updates;
+
 namespace DnsBlocker.Core.Models;
 
 public sealed class AppConfig
@@ -15,6 +17,18 @@ public sealed class AppConfig
     public List<string> ExtraBlocklistUrls { get; set; } = [];
 
     public List<string> ExtraWhitelistUrls { get; set; } = [];
+
+    /// <summary>kboghdady YouTube ads (pi-hole list). Re-fetched on scheduled sync / ApplyNow.</summary>
+    public bool CuratedYoutubeAds { get; set; } = true;
+
+    /// <summary>OISD big (domainswild). Default on — broad ads/trackers.</summary>
+    public bool CuratedOisdBig { get; set; } = true;
+
+    /// <summary>OISD NSFW (domainswild). Default on — family NSFW, lower FP than adult dumps.</summary>
+    public bool CuratedOisdNsfw { get; set; } = true;
+
+    /// <summary>Chadmayfield porn_all. Default off — large adult list; explicit opt-in.</summary>
+    public bool CuratedChadmayfieldPorn { get; set; } = false;
 
     public List<string> DnsTargets { get; set; } = ["localhost"];
 
@@ -34,8 +48,11 @@ public sealed class AppConfig
 
     public string PolicyNamePrefix { get; set; } = "DnsBlocker_";
 
-    /// <summary>URL of version.json feed for application updates. Empty disables checks.</summary>
-    public string UpdateFeedUrl { get; set; } = "";
+    /// <summary>
+    /// URL of version.json feed for application updates.
+    /// Defaults to the public GitHub Releases latest asset; clear to disable checks.
+    /// </summary>
+    public string UpdateFeedUrl { get; set; } = UpdateFeedUrls.DefaultPublicFeedUrl;
 
     /// <summary>When true, the UI checks for updates on startup (if feed URL is set).</summary>
     public bool CheckUpdatesOnStartup { get; set; } = true;
@@ -45,4 +62,17 @@ public sealed class AppConfig
     /// When false, only notify (UI / logs).
     /// </summary>
     public bool AutoInstallUpdates { get; set; } = false;
+
+    /// <summary>
+    /// True after the user completes (or skips) the first-run setup wizard.
+    /// Mirrored by ProgramData setup-complete.flag for install-worker coordination.
+    /// </summary>
+    public bool SetupWizardCompleted { get; set; } = false;
+
+    /// <summary>
+    /// UI language override stored in ProgramData config.json.
+    /// Empty / "auto" = follow OS UI culture (fr* → French, otherwise English).
+    /// Explicit: "en" or "fr".
+    /// </summary>
+    public string UiLanguage { get; set; } = "auto";
 }

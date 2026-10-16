@@ -252,8 +252,9 @@ public sealed class StateStore : IDisposable
         }
     }
 
-    public StatsSnapshot GetStats(DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    public StatsSnapshot GetStats(DateTimeOffset fromUtc, DateTimeOffset toUtc, int topN = 20)
     {
+        topN = Math.Clamp(topN, 1, 100);
         lock (_gate)
         {
             using var conn = Open();
@@ -270,17 +271,23 @@ public sealed class StateStore : IDisposable
                 blocked = r.GetInt64(1);
             }
 
+            var topQueried = QueryTop(conn, """
+                SELECT query_name, COUNT(*) AS c FROM query_events
+                WHERE ts >= $f AND ts <= $t
+                GROUP BY query_name ORDER BY c DESC LIMIT $limit;
+                """, fromUtc, toUtc, topN);
+
             var topBlocked = QueryTop(conn, """
                 SELECT query_name, COUNT(*) AS c FROM query_events
                 WHERE blocked = 1 AND ts >= $f AND ts <= $t
-                GROUP BY query_name ORDER BY c DESC LIMIT 20;
-                """, fromUtc, toUtc);
+                GROUP BY query_name ORDER BY c DESC LIMIT $limit;
+                """, fromUtc, toUtc, topN);
 
             var topClients = QueryTop(conn, """
                 SELECT COALESCE(client_ip, 'unknown'), COUNT(*) AS c FROM query_events
                 WHERE blocked = 1 AND ts >= $f AND ts <= $t
-                GROUP BY COALESCE(client_ip, 'unknown') ORDER BY c DESC LIMIT 20;
-                """, fromUtc, toUtc);
+                GROUP BY COALESCE(client_ip, 'unknown') ORDER BY c DESC LIMIT $limit;
+                """, fromUtc, toUtc, topN);
 
             return new StatsSnapshot
             {
@@ -288,6 +295,8 @@ public sealed class StateStore : IDisposable
                 ToUtc = toUtc,
                 TotalQueries = total,
                 BlockedQueries = blocked,
+                TopN = topN,
+                TopQueriedDomains = topQueried,
                 TopBlockedDomains = topBlocked,
                 TopClients = topClients,
                 Message = total == 0
@@ -297,12 +306,18 @@ public sealed class StateStore : IDisposable
         }
     }
 
-    private static List<StatRow> QueryTop(SqliteConnection conn, string sql, DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    private static List<StatRow> QueryTop(
+        SqliteConnection conn,
+        string sql,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        int limit)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.Parameters.AddWithValue("$f", fromUtc.ToString("O"));
         cmd.Parameters.AddWithValue("$t", toUtc.ToString("O"));
+        cmd.Parameters.AddWithValue("$limit", limit);
         var rows = new List<StatRow>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())

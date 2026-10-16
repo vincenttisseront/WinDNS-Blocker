@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -30,38 +32,103 @@ public sealed class UpdateChecker : IUpdateChecker
             ? AppVersion.Current
             : AppVersion.StripMetadata(currentVersion);
 
-        if (string.IsNullOrWhiteSpace(feedUrl))
+        var resolved = UpdateFeedUrls.Resolve(feedUrl);
+        if (string.IsNullOrWhiteSpace(resolved))
         {
             return new UpdateCheckResult
             {
                 UpdateAvailable = false,
                 CurrentVersion = current,
-                Message = "Update feed URL is not configured."
+                Message = "URL du flux de mise à jour non configurée. / Update feed URL is not configured."
             };
         }
 
-        using var response = await _http.GetAsync(feedUrl, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-        var manifest = ParseManifest(json)
-                       ?? throw new InvalidOperationException("version.json did not contain a valid manifest.");
-
-        if (string.IsNullOrWhiteSpace(manifest.Version))
-            throw new InvalidOperationException("version.json is missing 'version'.");
-
-        var available = AppVersion.IsNewerThan(manifest.Version, current);
-        return new UpdateCheckResult
+        HttpResponseMessage response;
+        try
         {
-            UpdateAvailable = available,
-            CurrentVersion = current,
-            Manifest = manifest,
-            Message = available
-                ? $"Update available: {manifest.Version}"
-                : $"Already up to date ({current})."
-        };
+            response = await _http.GetAsync(resolved, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return FeedError(current, resolved,
+                "Délai dépassé en contactant le flux de mise à jour. / Update feed request timed out.");
+        }
+        catch (HttpRequestException ex)
+        {
+            return FeedError(current, resolved,
+                "Impossible de joindre le flux de mise à jour. / Cannot reach update feed. " +
+                (ex.Message.Length > 120 ? ex.Message[..120] + "…" : ex.Message));
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                return FeedError(current, resolved, FormatHttpStatusMessage(response.StatusCode, resolved));
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            var manifest = ParseManifest(json);
+            if (manifest is null)
+            {
+                return FeedError(current, resolved,
+                    "version.json invalide (JSON). / version.json did not contain a valid manifest.");
+            }
+
+            if (string.IsNullOrWhiteSpace(manifest.Version))
+            {
+                return FeedError(current, resolved,
+                    "version.json sans champ « version ». / version.json is missing 'version'.");
+            }
+
+            var available = AppVersion.IsNewerThan(manifest.Version, current);
+            return new UpdateCheckResult
+            {
+                UpdateAvailable = available,
+                CurrentVersion = current,
+                Manifest = manifest,
+                Message = available
+                    ? $"Mise à jour disponible : {manifest.Version} / Update available: {manifest.Version}"
+                    : $"À jour ({current}). / Already up to date ({current})."
+            };
+        }
     }
 
     public static UpdateManifest? ParseManifest(string json) =>
         JsonSerializer.Deserialize<UpdateManifest>(json, JsonOptions);
+
+    /// <summary>User-facing French (+ EN) text for feed HTTP failures — avoids raw HttpRequestException dumps.</summary>
+    public static string FormatHttpStatusMessage(HttpStatusCode statusCode, string feedUrl)
+    {
+        var code = (int)statusCode;
+        if (statusCode == HttpStatusCode.NotFound)
+        {
+            return
+                "Flux de mise à jour introuvable (404). Vérifiez l'URL version.json — " +
+                $"recommandé : {UpdateFeedUrls.DefaultPublicFeedUrl}. " +
+                $"(URL essayée : {feedUrl}) / " +
+                "Update feed not found (404). Check the version.json URL — " +
+                $"recommended: {UpdateFeedUrls.DefaultPublicFeedUrl}.";
+        }
+
+        if (statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            return
+                $"Accès au flux refusé ({code}). / Update feed access denied ({code}).";
+        }
+
+        return
+            $"Le serveur du flux a répondu {code} ({statusCode}). / " +
+            $"Update feed returned HTTP {code} ({statusCode}).";
+    }
+
+    private static UpdateCheckResult FeedError(string current, string feedUrl, string message) =>
+        new()
+        {
+            UpdateAvailable = false,
+            FeedError = true,
+            CurrentVersion = current,
+            Message = message
+        };
 }

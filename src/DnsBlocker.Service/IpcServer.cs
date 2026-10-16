@@ -2,8 +2,10 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using DnsBlocker.Core.Ipc;
+using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Paths;
 using Microsoft.Extensions.Logging;
+// PipeFactory lives in DnsBlocker.Core.Ipc
 
 namespace DnsBlocker.Service;
 
@@ -29,12 +31,8 @@ public sealed class IpcServer
             NamedPipeServerStream? server = null;
             try
             {
-                server = new NamedPipeServerStream(
-                    _pipeName,
-                    PipeDirection.InOut,
-                    NamedPipeServerStream.MaxAllowedServerInstances,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                // ACL must allow Authenticated Users — default LocalSystem pipes often block the UI.
+                server = PipeFactory.CreateServer(_pipeName);
 
                 await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
                 var connected = server;
@@ -120,7 +118,13 @@ public sealed class IpcServer
                 case IpcProtocol.MethodGetStats:
                 {
                     var p = request.Params?.Deserialize<GetStatsParams>(IpcProtocol.JsonOptions) ?? new GetStatsParams();
-                    return IpcResponse.Success(request.Id, _runtime.GetStats(p.Hours));
+                    return IpcResponse.Success(request.Id, _runtime.GetStats(p.Hours, p.TopN));
+                }
+
+                case IpcProtocol.MethodGetTargetPolicyStatus:
+                {
+                    var result = await _runtime.GetTargetPolicyStatusAsync(cancellationToken).ConfigureAwait(false);
+                    return IpcResponse.Success(request.Id, result);
                 }
 
                 case IpcProtocol.MethodGetAppVersion:
@@ -139,6 +143,34 @@ public sealed class IpcServer
                     var result = await _runtime.InstallUpdateAsync(p.Manifest, p.Silent, cancellationToken)
                         .ConfigureAwait(false);
                     return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodTestTargetWinRm:
+                {
+                    var p = request.Params?.Deserialize<TargetWinRmTestRequest>(IpcProtocol.JsonOptions)
+                            ?? throw new InvalidOperationException("Missing WinRM test params");
+                    var result = await _runtime.TestTargetWinRmAsync(p, cancellationToken).ConfigureAwait(false);
+                    p.Password = "";
+                    return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodPrepareDnsTarget:
+                {
+                    var p = request.Params?.Deserialize<PrepareDnsTargetRequest>(IpcProtocol.JsonOptions)
+                            ?? throw new InvalidOperationException("Missing prepare params");
+                    var result = await _runtime.PrepareDnsTargetAsync(p, cancellationToken).ConfigureAwait(false);
+                    p.Password = "";
+                    return IpcResponse.Success(request.Id, result);
+                }
+
+                case IpcProtocol.MethodGetPreparedTargets:
+                    return IpcResponse.Success(request.Id, _runtime.GetPreparedTargets());
+
+                case IpcProtocol.MethodClearTargetCredentials:
+                {
+                    var p = request.Params?.Deserialize<ClearTargetCredentialsParams>(IpcProtocol.JsonOptions)
+                            ?? throw new InvalidOperationException("Missing hostname");
+                    return IpcResponse.Success(request.Id, _runtime.ClearTargetCredentials(p.Hostname));
                 }
 
                 default:

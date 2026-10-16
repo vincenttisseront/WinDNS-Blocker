@@ -1,6 +1,9 @@
 using DnsBlocker.Core.Config;
+using DnsBlocker.Core.Dns;
 using DnsBlocker.Core.Logging;
 using DnsBlocker.Core.Models;
+using DnsBlocker.Core.Security;
+using DnsBlocker.Core.Setup;
 using DnsBlocker.Core.Stats;
 using DnsBlocker.Core.Storage;
 using DnsBlocker.Core.Sync;
@@ -15,32 +18,46 @@ public sealed class HubRuntime
 {
     private readonly ConfigStore _configStore;
     private readonly SyncEngine _syncEngine;
+    private readonly IDnsPolicyProvider _dnsProvider;
     private readonly StateStore _state;
     private readonly FileLogBuffer _logs;
     private readonly DnsStatsCollector _stats;
     private readonly IUpdateChecker _updateChecker;
     private readonly UpdateInstaller _updateInstaller;
+    private readonly ITargetPrepRunner _targetPrep;
+    private readonly SecureCredentialStore _credentials;
+    private readonly PreparedTargetStore _preparedTargets;
     private readonly object _configGate = new();
     private readonly object _updateGate = new();
+    private readonly object _probeGate = new();
     private AppConfig _config;
     private UpdateCheckResult? _lastUpdateCheck;
+    private TargetPolicyStatusResult? _lastPolicyProbe;
 
     public HubRuntime(
         ConfigStore configStore,
         SyncEngine syncEngine,
+        IDnsPolicyProvider dnsProvider,
         StateStore state,
         FileLogBuffer logs,
         DnsStatsCollector stats,
         IUpdateChecker updateChecker,
-        UpdateInstaller updateInstaller)
+        UpdateInstaller updateInstaller,
+        ITargetPrepRunner targetPrep,
+        SecureCredentialStore credentials,
+        PreparedTargetStore preparedTargets)
     {
         _configStore = configStore;
         _syncEngine = syncEngine;
+        _dnsProvider = dnsProvider;
         _state = state;
         _logs = logs;
         _stats = stats;
         _updateChecker = updateChecker;
         _updateInstaller = updateInstaller;
+        _targetPrep = targetPrep;
+        _credentials = credentials;
+        _preparedTargets = preparedTargets;
         _config = _configStore.Load();
     }
 
@@ -91,6 +108,10 @@ public sealed class HubRuntime
 
     public ServiceStatus GetStatus(DateTimeOffset? nextScheduledUtc)
     {
+        TargetPolicyStatusResult? lastProbe;
+        lock (_probeGate)
+            lastProbe = _lastPolicyProbe;
+
         return new ServiceStatus
         {
             IsSyncing = _syncEngine.IsSyncing,
@@ -99,19 +120,100 @@ public sealed class HubRuntime
             ActiveDomainCount = _state.CountDomains(),
             RecentLogs = _logs.GetRecent(80).ToList(),
             StatsEnabled = _stats.IsEnabled,
-            StatsMessage = _stats.Message
+            StatsMessage = _stats.Message,
+            LastPolicyProbe = lastProbe
         };
+    }
+
+    /// <summary>
+    /// Probes each configured DNS target with Get-DnsServerQueryResolutionPolicy and
+    /// merges the live inventory with the last sync result (sync success ≠ policies installed).
+    /// </summary>
+    public async Task<TargetPolicyStatusResult> GetTargetPolicyStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var config = GetConfig();
+        var lastSync = _state.LoadLastSync();
+        var syncByTarget = (lastSync?.Targets ?? [])
+            .ToDictionary(t => t.Target, t => t, StringComparer.OrdinalIgnoreCase);
+
+        var checkedAt = DateTimeOffset.UtcNow;
+        var results = new List<TargetPolicyStatus>();
+        _logs.Write($"Policy probe started for {config.DnsTargets.Count} target(s)");
+
+        foreach (var target in config.DnsTargets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            syncByTarget.TryGetValue(target, out var sync);
+
+            try
+            {
+                var policies = await _dnsProvider
+                    .ListPoliciesAsync(target, config.PolicyNamePrefix, cancellationToken)
+                    .ConfigureAwait(false);
+                var enabled = policies.Count(p => p.IsEnabled);
+                var row = new TargetPolicyStatus
+                {
+                    Target = target,
+                    LastSyncStatus = sync?.Status ?? TargetSyncStatus.Idle,
+                    LastSyncFinishedAt = sync?.FinishedAt,
+                    LastSyncError = sync?.Error,
+                    LastSyncPolicyCount = sync?.PolicyCount ?? 0,
+                    LivePolicyCount = policies.Count,
+                    LiveEnabledCount = enabled,
+                    LivePolicyNames = policies.Select(p => p.Name).ToList(),
+                    ProbeOk = true,
+                    CheckedAt = checkedAt
+                };
+                results.Add(row);
+                _logs.Write(
+                    $"Policy probe OK: {target} — {policies.Count} installée(s), {enabled} activée(s)" +
+                    $" (sync: {row.LastSyncStatus}, {row.LastSyncPolicyCount}) → {row.AppliedLabel}");
+            }
+            catch (Exception ex)
+            {
+                var row = new TargetPolicyStatus
+                {
+                    Target = target,
+                    LastSyncStatus = sync?.Status ?? TargetSyncStatus.Idle,
+                    LastSyncFinishedAt = sync?.FinishedAt,
+                    LastSyncError = sync?.Error,
+                    LastSyncPolicyCount = sync?.PolicyCount ?? 0,
+                    ProbeOk = false,
+                    ProbeError = ex.Message,
+                    CheckedAt = checkedAt
+                };
+                results.Add(row);
+                _logs.Write($"Policy probe FAIL: {target} — {ex.Message}");
+            }
+        }
+
+        var result = new TargetPolicyStatusResult
+        {
+            CheckedAt = checkedAt,
+            Targets = results,
+            Message = results.Count == 0
+                ? "Aucune cible DNS configurée."
+                : null
+        };
+
+        lock (_probeGate)
+            _lastPolicyProbe = result;
+
+        return result;
     }
 
     public IReadOnlyList<string> SearchDomains(string? query, int limit) =>
         _state.SearchDomains(query, Math.Clamp(limit, 1, 1000));
 
-    public StatsSnapshot GetStats(int hours)
+    public StatsSnapshot GetStats(int hours, int topN = 20)
     {
         hours = Math.Clamp(hours, 1, 24 * 30);
+        topN = Math.Clamp(topN, 1, 100);
+
         var to = DateTimeOffset.UtcNow;
         var from = to.AddHours(-hours);
-        var snap = _state.GetStats(from, to);
+        var snap = _state.GetStats(from, to, topN);
         if (!_stats.IsEnabled && snap.Message is null)
         {
             return new StatsSnapshot
@@ -120,6 +222,8 @@ public sealed class HubRuntime
                 ToUtc = snap.ToUtc,
                 TotalQueries = snap.TotalQueries,
                 BlockedQueries = snap.BlockedQueries,
+                TopN = snap.TopN,
+                TopQueriedDomains = snap.TopQueriedDomains,
                 TopBlockedDomains = snap.TopBlockedDomains,
                 TopClients = snap.TopClients,
                 Message = _stats.Message
@@ -219,6 +323,84 @@ public sealed class HubRuntime
         }
     }
 
+    public Task<TargetWinRmTestResult> TestTargetWinRmAsync(
+        TargetWinRmTestRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        _logs.Write($"WinRM test → {request.Hostname} (user={request.Username})");
+        // Never log password
+        return _targetPrep.TestWinRmAsync(request, cancellationToken);
+    }
+
+    public async Task<PrepareDnsTargetResult> PrepareDnsTargetAsync(
+        PrepareDnsTargetRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        _logs.Write($"Préparation DNS cible → {request.Hostname} (user={request.Username}, dnsAdmins={request.AddHubToDnsAdmins})");
+        var result = await _targetPrep.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
+
+        if (result.Ok && result.Target is not null)
+        {
+            if (request.PersistCredentials)
+            {
+                _credentials.Save(request.Hostname, request.Username, request.Password);
+                result.Target.CredentialsStored = true;
+                _logs.Write($"Identifiants stockés (DPAPI) pour {request.Hostname}");
+            }
+            else
+            {
+                result.Target.CredentialsStored = false;
+            }
+
+            _preparedTargets.Upsert(result.Target);
+
+            // Ensure hostname is in DnsTargets farm list
+            var cfg = GetConfig();
+            if (!cfg.DnsTargets.Any(t => t.Equals(request.Hostname.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                cfg.DnsTargets.Add(request.Hostname.Trim());
+                SetConfig(cfg);
+            }
+
+            _logs.Write($"Cible préparée: {request.Hostname} (identité={result.Target.HubIdentityGranted})");
+        }
+        else
+        {
+            _logs.Write($"Préparation échouée pour {request.Hostname}: {result.Message}");
+        }
+
+        // Clear password from request object if caller reuses it (defensive)
+        request.Password = "";
+        return result;
+    }
+
+    public IReadOnlyList<PreparedTargetInfo> GetPreparedTargets()
+    {
+        var list = _preparedTargets.List().Select(t =>
+        {
+            var meta = _credentials.GetMeta(t.Hostname);
+            t.CredentialsStored = meta is not null;
+            if (meta is not null && string.IsNullOrWhiteSpace(t.Username))
+                t.Username = meta.Username;
+            return t;
+        }).ToList();
+        return list;
+    }
+
+    public bool ClearTargetCredentials(string hostname)
+    {
+        _credentials.Delete(hostname);
+        var existing = _preparedTargets.Get(hostname);
+        if (existing is not null)
+        {
+            existing.CredentialsStored = false;
+            _preparedTargets.Upsert(existing);
+        }
+
+        _logs.Write($"Identifiants effacés pour {hostname}");
+        return true;
+    }
+
     private static void Normalize(AppConfig config)
     {
         config.ChunkSize = Math.Clamp(config.ChunkSize, 1, 5000);
@@ -244,6 +426,10 @@ public sealed class HubRuntime
         RegexUrl = c.RegexUrl,
         ExtraBlocklistUrls = [.. c.ExtraBlocklistUrls],
         ExtraWhitelistUrls = [.. c.ExtraWhitelistUrls],
+        CuratedYoutubeAds = c.CuratedYoutubeAds,
+        CuratedOisdBig = c.CuratedOisdBig,
+        CuratedOisdNsfw = c.CuratedOisdNsfw,
+        CuratedChadmayfieldPorn = c.CuratedChadmayfieldPorn,
         DnsTargets = [.. c.DnsTargets],
         PolicyAction = c.PolicyAction,
         ChunkSize = c.ChunkSize,
@@ -254,6 +440,7 @@ public sealed class HubRuntime
         PolicyNamePrefix = c.PolicyNamePrefix,
         UpdateFeedUrl = c.UpdateFeedUrl,
         CheckUpdatesOnStartup = c.CheckUpdatesOnStartup,
-        AutoInstallUpdates = c.AutoInstallUpdates
+        AutoInstallUpdates = c.AutoInstallUpdates,
+        SetupWizardCompleted = c.SetupWizardCompleted
     };
 }

@@ -94,7 +94,64 @@ public class UpdateCheckerTests
         var checker = new UpdateChecker(new MockHttpMessageHandler().ToHttpClient());
         var result = await checker.CheckAsync("", currentVersion: "1.0.0");
         Assert.False(result.UpdateAvailable);
+        Assert.False(result.FeedError);
         Assert.Contains("not configured", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckAsync_Feed404_ReturnsFriendlyFeedError()
+    {
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json")
+            .Respond(System.Net.HttpStatusCode.NotFound);
+
+        var checker = new UpdateChecker(mockHttp.ToHttpClient());
+        var result = await checker.CheckAsync(UpdateFeedUrls.DefaultPublicFeedUrl, currentVersion: "1.0.0");
+
+        Assert.False(result.UpdateAvailable);
+        Assert.True(result.FeedError);
+        Assert.Contains("404", result.Message);
+        Assert.Contains("introuvable", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("does not indicate success", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckAsync_RewritesBadLatestDownloadPath()
+    {
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When(UpdateFeedUrls.DefaultPublicFeedUrl)
+            .Respond("application/json", """
+                {
+                  "version": "1.0.11",
+                  "msiUrl": "https://feed.test/app.msi",
+                  "sha256": "deadbeef"
+                }
+                """);
+
+        var checker = new UpdateChecker(mockHttp.ToHttpClient());
+        // Common typo that 404s on GitHub: /releases/download/latest/…
+        var result = await checker.CheckAsync(
+            "https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/latest/version.json",
+            currentVersion: "1.0.0");
+
+        Assert.True(result.UpdateAvailable);
+        Assert.False(result.FeedError);
+        Assert.Equal("1.0.11", result.Manifest!.Version);
+    }
+
+    [Fact]
+    public void Resolve_RewritesDownloadLatestPath()
+    {
+        var fixedUrl = UpdateFeedUrls.Resolve(
+            "https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/latest/version.json");
+        Assert.Equal(UpdateFeedUrls.DefaultPublicFeedUrl, fixedUrl);
+    }
+
+    [Fact]
+    public void AppConfig_DefaultUpdateFeedUrl_IsStableLatest()
+    {
+        var cfg = new DnsBlocker.Core.Models.AppConfig();
+        Assert.Equal(UpdateFeedUrls.DefaultPublicFeedUrl, cfg.UpdateFeedUrl);
     }
 
     [Fact]
