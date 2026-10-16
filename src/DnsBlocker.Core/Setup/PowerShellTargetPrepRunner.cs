@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using DnsBlocker.Core.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -36,34 +37,55 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
 
         ValidateCreds(request);
 
-        var script = $$"""
+        // Credentials via process env (not interpolated into script) to avoid empty/broken scripts
+        // when passwords contain quotes, $, backticks, etc.
+        var script = """
             $ErrorActionPreference = 'Stop'
-            $user = '{{Escape(request.Username)}}'
-            $plain = '{{Escape(request.Password)}}'
-            $target = '{{Escape(request.Hostname)}}'
-            $secure = ConvertTo-SecureString $plain -AsPlainText -Force
-            $cred = New-Object System.Management.Automation.PSCredential($user, $secure)
-            $plain = $null
-            [void]$secure
+            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
             $log = New-Object System.Collections.Generic.List[string]
+            function Emit($ok, $message) {
+              $obj = [ordered]@{ ok = [bool]$ok; message = [string]$message; log = @($log) }
+              $json = $obj | ConvertTo-Json -Compress -Depth 6
+              [Console]::Out.WriteLine($json)
+            }
             try {
-              [void]$log.Add('Test-WSMan…')
-              $null = Test-WSMan -ComputerName $target -Authentication Default -Credential $cred -ErrorAction Stop
+              $user = $env:DNSBLOCKER_WINRM_USER
+              $plain = $env:DNSBLOCKER_WINRM_PASS
+              $target = $env:DNSBLOCKER_WINRM_TARGET
+              if ([string]::IsNullOrWhiteSpace($user) -or [string]::IsNullOrWhiteSpace($target)) {
+                throw 'Variables DNSBLOCKER_WINRM_USER / TARGET manquantes.'
+              }
+              if ($null -eq $plain) { throw 'Variable DNSBLOCKER_WINRM_PASS manquante.' }
+
+              [void]$log.Add('Création PSCredential…')
+              $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+              $cred = New-Object System.Management.Automation.PSCredential($user, $secure)
+              Remove-Variable plain -ErrorAction SilentlyContinue
+
+              [void]$log.Add('Test-WSMan (Negotiate)…')
+              $null = Test-WSMan -ComputerName $target -Authentication Negotiate -Credential $cred -ErrorAction Stop
               [void]$log.Add('Test-WSMan OK')
-              [void]$log.Add('New-CimSession…')
-              $session = New-CimSession -ComputerName $target -Credential $cred -ErrorAction Stop
+
+              [void]$log.Add('New-CimSession (Negotiate)…')
+              $session = New-CimSession -ComputerName $target -Credential $cred -Authentication Negotiate -ErrorAction Stop
               Remove-CimSession $session
               [void]$log.Add('CimSession OK')
-              $result = @{ ok = $true; message = 'WinRM/CIM joignable avec le compte fourni.'; log = $log }
+
+              Emit $true 'WinRM/CIM joignable avec le compte fourni (Negotiate).'
+              exit 0
             } catch {
-              [void]$log.Add($_.Exception.Message)
-              $result = @{ ok = $false; message = $_.Exception.Message; log = $log }
+              $msg = $_.Exception.Message
+              if ($_.FullyQualifiedErrorId) { $msg = $msg + ' | FQID=' + $_.FullyQualifiedErrorId }
+              [void]$log.Add($msg)
+              Emit $false $msg
+              exit 2
             }
-            $result | ConvertTo-Json -Compress -Depth 5
             """;
 
-        return await RunJsonAsync<TargetWinRmTestResult>(script, cancellationToken).ConfigureAwait(false)
-               ?? new TargetWinRmTestResult { Ok = false, Message = "Réponse PowerShell vide." };
+        var run = await RunScriptAsync(script, request.Hostname, request.Username, request.Password, cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapWinRmResult(run);
     }
 
     public async Task<PrepareDnsTargetResult> PrepareAsync(
@@ -87,30 +109,35 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
             : request.HubIdentityToGrant.Trim();
         var addDnsAdmins = request.AddHubToDnsAdmins ? "$true" : "$false";
 
-        // Password is embedded only in the ephemeral stdin script — never logged by us.
         var script = $$"""
             $ErrorActionPreference = 'Stop'
-            $user = '{{Escape(request.Username)}}'
-            $plain = '{{Escape(request.Password)}}'
-            $target = '{{Escape(request.Hostname)}}'
+            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+            $log = New-Object System.Collections.Generic.List[string]
             $requestedIdentity = '{{Escape(identity)}}'
             $addDnsAdmins = {{addDnsAdmins}}
-            $secure = ConvertTo-SecureString $plain -AsPlainText -Force
-            $cred = New-Object System.Management.Automation.PSCredential($user, $secure)
-            $plain = $null
-            $log = New-Object System.Collections.Generic.List[string]
 
-            function Resolve-HubIdentity {
-              param([string]$Requested)
+            function Emit($ok, $message, $hubIdentity, $added) {
+              $obj = [ordered]@{
+                ok = [bool]$ok
+                message = [string]$message
+                log = @($log)
+                hubIdentity = $hubIdentity
+                addedToDnsAdmins = [bool]$added
+              }
+              [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress -Depth 8))
+            }
+
+            function Resolve-HubIdentity([string]$Requested) {
               if ($Requested) { return $Requested }
               try {
                 $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='DnsBlocker'" -ErrorAction Stop
                 if ($svc -and $svc.StartName) {
                   $start = $svc.StartName
-                  if ($start -match 'LocalSystem|LocalService|NetworkService') {
-                    $dnsDomain = (Get-CimInstance Win32_ComputerSystem).Domain
+                  if ($start -match 'LocalSystem|LocalService|NetworkService|\.\\LocalSystem') {
+                    $cs = Get-CimInstance Win32_ComputerSystem
+                    $dnsDomain = $cs.Domain
                     $name = $env:COMPUTERNAME
-                    if ($dnsDomain -and $dnsDomain -ne $name) {
+                    if ($cs.PartOfDomain -and $dnsDomain) {
                       return ($dnsDomain + '\' + $name + '$')
                     }
                     return ($name + '$')
@@ -122,25 +149,31 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
             }
 
             try {
-              [void]$log.Add('Test-WSMan…')
-              $null = Test-WSMan -ComputerName $target -Authentication Default -Credential $cred -ErrorAction Stop
+              $user = $env:DNSBLOCKER_WINRM_USER
+              $plain = $env:DNSBLOCKER_WINRM_PASS
+              $target = $env:DNSBLOCKER_WINRM_TARGET
+              if ([string]::IsNullOrWhiteSpace($user) -or [string]::IsNullOrWhiteSpace($target)) {
+                throw 'Variables DNSBLOCKER_WINRM_USER / TARGET manquantes.'
+              }
+              $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+              $cred = New-Object System.Management.Automation.PSCredential($user, $secure)
+              Remove-Variable plain -ErrorAction SilentlyContinue
+
+              [void]$log.Add('Test-WSMan (Negotiate)…')
+              $null = Test-WSMan -ComputerName $target -Authentication Negotiate -Credential $cred -ErrorAction Stop
               [void]$log.Add('WinRM OK')
 
               $hubIdentity = Resolve-HubIdentity -Requested $requestedIdentity
               [void]$log.Add('Identité à autoriser: ' + $hubIdentity)
 
-              $remote = Invoke-Command -ComputerName $target -Credential $cred -ScriptBlock {
+              # Single-hop Invoke-Command with explicit -Credential (no CredSSP required).
+              $remote = Invoke-Command -ComputerName $target -Credential $cred -Authentication Negotiate -ScriptBlock {
                 param($HubIdentity, $DoDnsAdmins)
                 $steps = New-Object System.Collections.Generic.List[string]
                 $ErrorActionPreference = 'Stop'
 
-                # DNS role / module
-                try {
-                  Import-Module DnsServer -ErrorAction Stop
-                  [void]$steps.Add('Module DnsServer OK')
-                } catch {
-                  throw "Module DnsServer indisponible sur la cible: $($_.Exception.Message)"
-                }
+                Import-Module DnsServer -ErrorAction Stop
+                [void]$steps.Add('Module DnsServer OK')
 
                 $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server'
                 if (-not (Test-Path $regPath)) {
@@ -155,97 +188,243 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
                   [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
                   [System.Security.AccessControl.PropagationFlags]::None,
                   [System.Security.AccessControl.AccessControlType]::Allow)
-                $acl.SetAccessRuleProtection($false, $true)
                 $acl.AddAccessRule($rule)
                 Set-Acl -Path $regPath -AclObject $acl
-                [void]$steps.Add('ACL Full Control accordée à ' + $HubIdentity + ' sur DNS Server')
+                [void]$steps.Add('ACL Full Control accordée à ' + $HubIdentity)
 
                 if ($DoDnsAdmins) {
                   try {
-                    $group = [ADSI]'WinNT://./DnsAdmins,group'
-                    # Domain DnsAdmins via net localgroup may not exist locally; try AD
                     Add-LocalGroupMember -Group 'DnsAdmins' -Member $HubIdentity -ErrorAction Stop
-                    [void]$steps.Add('Ajout Local DnsAdmins: ' + $HubIdentity)
+                    [void]$steps.Add('Ajout groupe local DnsAdmins: ' + $HubIdentity)
                   } catch {
-                    try {
-                      # Domain group via ADSI LDAP-less net group
-                      $null = net group "DnsAdmins" $HubIdentity /add /domain 2>&1
-                      [void]$steps.Add('Tentative net group DnsAdmins: ' + $HubIdentity + ' (vérifier manuellement si échec silencieux)')
-                    } catch {
-                      [void]$steps.Add('Add DnsAdmins échoué: ' + $_.Exception.Message)
-                    }
+                    $net = & net group "DnsAdmins" $HubIdentity /add /domain 2>&1 | Out-String
+                    [void]$steps.Add('net group DnsAdmins: ' + $net.Trim())
                   }
                 }
 
                 $probe = 'DnsBlocker_Probe_' + [guid]::NewGuid().ToString('N').Substring(0,8)
-                try {
-                  Add-DnsServerQueryResolutionPolicy -Name $probe -Action DENY -Fqdn 'EQ,probe.invalid.dnsblocker.local' -ErrorAction Stop
-                  [void]$steps.Add('Probe QRP Add OK (' + $probe + ')')
-                } catch {
-                  throw ("Probe Add-DnsServerQueryResolutionPolicy échoué: " + $_.Exception.Message + " — ACL/DnsAdmins insuffisants ?")
-                }
-                try {
-                  Remove-DnsServerQueryResolutionPolicy -Name $probe -Force -ErrorAction Stop
-                  [void]$steps.Add('Probe QRP Remove OK')
-                } catch {
-                  [void]$steps.Add('Probe Remove avertissement: ' + $_.Exception.Message)
-                }
+                Add-DnsServerQueryResolutionPolicy -Name $probe -Action DENY -Fqdn 'EQ,probe.invalid.dnsblocker.local' -ErrorAction Stop
+                [void]$steps.Add('Probe QRP Add OK (' + $probe + ')')
+                Remove-DnsServerQueryResolutionPolicy -Name $probe -Force -ErrorAction Stop
+                [void]$steps.Add('Probe QRP Remove OK')
 
                 return @{ ok = $true; steps = $steps; hubIdentity = $HubIdentity }
               } -ArgumentList $hubIdentity, $addDnsAdmins
 
-              foreach ($s in $remote.steps) { [void]$log.Add([string]$s) }
-              $result = @{
-                ok = [bool]$remote.ok
-                message = 'Cible préparée. Sync QRP peut utiliser le compte du service hub.'
-                log = $log
-                hubIdentity = [string]$remote.hubIdentity
-                addedToDnsAdmins = [bool]$addDnsAdmins
-              }
+              foreach ($s in @($remote.steps)) { [void]$log.Add([string]$s) }
+              Emit $true 'Cible préparée. Sync QRP peut utiliser le compte du service hub.' ([string]$remote.hubIdentity) ([bool]$addDnsAdmins)
+              exit 0
             } catch {
-              [void]$log.Add($_.Exception.Message)
-              $result = @{
-                ok = $false
-                message = $_.Exception.Message
-                log = $log
-                hubIdentity = $null
-                addedToDnsAdmins = $false
-              }
+              $msg = $_.Exception.Message
+              if ($_.FullyQualifiedErrorId) { $msg = $msg + ' | FQID=' + $_.FullyQualifiedErrorId }
+              [void]$log.Add($msg)
+              Emit $false $msg $null $false
+              exit 2
             }
-
-            $result | ConvertTo-Json -Compress -Depth 6
             """;
 
-        var raw = await RunJsonAsync<PrepJson>(script, cancellationToken).ConfigureAwait(false);
-        if (raw is null)
+        var run = await RunScriptAsync(script, request.Hostname, request.Username, request.Password, cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapPrepResult(run, request);
+    }
+
+    public static TargetWinRmTestResult MapWinRmResult(PowerShellRunResult run)
+    {
+        var parsed = TryParseJson<WinRmJson>(run.Stdout);
+        var log = new List<string>();
+        if (parsed?.Log is { Count: > 0 })
+            log.AddRange(parsed.Log);
+        else if (!string.IsNullOrWhiteSpace(run.Stdout))
+            log.Add("stdout: " + Truncate(run.Stdout, 800));
+        if (!string.IsNullOrWhiteSpace(run.Stderr))
+            log.Add("stderr: " + Truncate(ScrubSecrets(run.Stderr), 800));
+        log.Add($"exitCode={run.ExitCode}");
+
+        if (parsed is not null)
         {
+            var msg = EnrichWinRmMessage(parsed.Message ?? "", run);
+            return new TargetWinRmTestResult
+            {
+                Ok = parsed.Ok,
+                Message = parsed.Ok ? (parsed.Message ?? "OK") : msg,
+                Log = log
+            };
+        }
+
+        // No JSON — never return a bare empty message
+        var fallback = BuildEmptyResponseMessage(run);
+        return new TargetWinRmTestResult
+        {
+            Ok = false,
+            Message = fallback,
+            Log = log
+        };
+    }
+
+    public static PrepareDnsTargetResult MapPrepResult(PowerShellRunResult run, PrepareDnsTargetRequest request)
+    {
+        var parsed = TryParseJson<PrepJson>(run.Stdout);
+        var log = new List<string>();
+        if (parsed?.Log is { Count: > 0 })
+            log.AddRange(parsed.Log);
+        else if (!string.IsNullOrWhiteSpace(run.Stdout))
+            log.Add("stdout: " + Truncate(run.Stdout, 800));
+        if (!string.IsNullOrWhiteSpace(run.Stderr))
+            log.Add("stderr: " + Truncate(ScrubSecrets(run.Stderr), 800));
+        log.Add($"exitCode={run.ExitCode}");
+
+        if (parsed is not null)
+        {
+            var ok = parsed.Ok;
             return new PrepareDnsTargetResult
             {
-                Ok = false,
-                Message = "Réponse PowerShell vide.",
-                Log = []
+                Ok = ok,
+                Message = ok ? (parsed.Message ?? "OK") : EnrichWinRmMessage(parsed.Message ?? "", run),
+                Log = log,
+                Target = ok
+                    ? new PreparedTargetInfo
+                    {
+                        Hostname = request.Hostname.Trim(),
+                        Username = request.Username.Trim(),
+                        CredentialsStored = false,
+                        Prepared = true,
+                        PreparedAtUtc = DateTimeOffset.UtcNow,
+                        LastProbeMessage = parsed.Message,
+                        HubIdentityGranted = parsed.HubIdentity,
+                        AddedToDnsAdmins = parsed.AddedToDnsAdmins
+                    }
+                    : null
             };
         }
 
         return new PrepareDnsTargetResult
         {
-            Ok = raw.Ok,
-            Message = raw.Message ?? "",
-            Log = raw.Log ?? [],
-            Target = raw.Ok
-                ? new PreparedTargetInfo
-                {
-                    Hostname = request.Hostname.Trim(),
-                    Username = request.Username.Trim(),
-                    CredentialsStored = false, // filled by HubRuntime
-                    Prepared = true,
-                    PreparedAtUtc = DateTimeOffset.UtcNow,
-                    LastProbeMessage = raw.Message,
-                    HubIdentityGranted = raw.HubIdentity,
-                    AddedToDnsAdmins = raw.AddedToDnsAdmins
-                }
-                : null
+            Ok = false,
+            Message = BuildEmptyResponseMessage(run),
+            Log = log
         };
+    }
+
+    public static string BuildEmptyResponseMessage(PowerShellRunResult run)
+    {
+        var parts = new List<string>
+        {
+            "PowerShell n'a pas renvoyé de JSON exploitable."
+        };
+        if (run.ExitCode != 0)
+            parts.Add($"Code de sortie={run.ExitCode}.");
+        if (!string.IsNullOrWhiteSpace(run.Stderr))
+            parts.Add("stderr: " + Truncate(ScrubSecrets(run.Stderr), 400));
+        else if (!string.IsNullOrWhiteSpace(run.Stdout))
+            parts.Add("stdout: " + Truncate(ScrubSecrets(run.Stdout), 400));
+        else
+            parts.Add("stdout et stderr vides (processus tué, politique ConstrainedLanguage, ou -File illisible sous le compte service).");
+
+        parts.Add(EnrichWinRmMessage("", run));
+        return string.Join(" ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+    }
+
+    public static string EnrichWinRmMessage(string raw, PowerShellRunResult run)
+    {
+        var blob = $"{raw}\n{run.Stderr}\n{run.Stdout}";
+        var tips = new List<string>();
+
+        if (Regex.IsMatch(blob, @"Access is denied|AccessDenied|0x80070005|WIN32 5", RegexOptions.IgnoreCase))
+            tips.Add("Accès refusé : vérifiez DOMAINE\\user + mot de passe, et que le compte est admin local/domaine sur la cible.");
+
+        if (Regex.IsMatch(blob, @"WinRM|WSMan|cannot connect|connection refused|RPC server|timed out|no network provider", RegexOptions.IgnoreCase)
+            || Regex.IsMatch(blob, @"0x80338012|0x80338126", RegexOptions.IgnoreCase))
+            tips.Add("WinRM : sur la cible exécutez `Enable-PSRemoting -Force` et ouvrez le firewall (TCP 5985/5986). Depuis le hub : `Test-WSMan <cible>`.");
+
+        if (Regex.IsMatch(blob, @"logon failure|unknown user name|bad password|0x8007052e", RegexOptions.IgnoreCase))
+            tips.Add("Authentification : utilisez DOMAINE\\utilisateur (pas UPN seul si Negotiate échoue) et un mot de passe valide.");
+
+        if (Regex.IsMatch(blob, @"CredSSP|double.?hop|Delegate", RegexOptions.IgnoreCase))
+            tips.Add("Double-hop/CredSSP non requis pour ce wizard (PSCredential explicite). Si un message CredSSP apparaît, vérifiez les GPO WinRM.");
+
+        if (Regex.IsMatch(blob, @"ConstrainedLanguage|language mode", RegexOptions.IgnoreCase))
+            tips.Add("ConstrainedLanguage : assouplir la stratégie PowerShell pour le compte du service DnsBlocker, ou lancer le service sous un compte domaine.");
+
+        if (Regex.IsMatch(blob, @"LocalSystem|network path|0x800706ba", RegexOptions.IgnoreCase))
+            tips.Add("Sous LocalSystem le hub utilise quand même -Credential Negotiate (single-hop). Vérifiez DNS/résolution du FQDN cible.");
+
+        if (tips.Count == 0 && !string.IsNullOrWhiteSpace(raw))
+            return raw + " — Vérifiez WinRM (Enable-PSRemoting), firewall 5985/5986, et le format DOMAINE\\user.";
+
+        if (tips.Count == 0)
+            return "Échec WinRM/CIM. Vérifiez Enable-PSRemoting sur la cible, firewall 5985/5986, DNS, et DOMAINE\\user.";
+
+        var head = string.IsNullOrWhiteSpace(raw) ? "Échec WinRM/CIM." : raw.Trim();
+        return head + " → " + string.Join(" ", tips);
+    }
+
+    private async Task<PowerShellRunResult> RunScriptAsync(
+        string script,
+        string hostname,
+        string username,
+        string password,
+        CancellationToken cancellationToken)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "DnsBlocker");
+        Directory.CreateDirectory(tempDir);
+        var scriptPath = Path.Combine(tempDir, "winrm-" + Guid.NewGuid().ToString("N") + ".ps1");
+        await File.WriteAllTextAsync(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken)
+            .ConfigureAwait(false);
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ResolvePowerShellPath(),
+                // -File avoids stdin/-Command - races under services; -EncodedCommand not needed.
+                Arguments = $"-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+            psi.Environment["DNSBLOCKER_WINRM_USER"] = username;
+            psi.Environment["DNSBLOCKER_WINRM_PASS"] = password;
+            psi.Environment["DNSBLOCKER_WINRM_TARGET"] = hostname.Trim();
+
+            using var process = new Process { StartInfo = psi };
+            if (!process.Start())
+                throw new InvalidOperationException("Impossible de démarrer powershell.exe");
+
+            // Avoid BeginOutputReadLine race with WaitForExit (classic empty-stdout bug).
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var stdout = await stdoutTask.ConfigureAwait(false);
+            var stderr = await stderrTask.ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "WinRM PowerShell finished exit={Exit} stdoutLen={Out} stderrLen={Err}",
+                process.ExitCode, stdout?.Length ?? 0, stderr?.Length ?? 0);
+
+            return new PowerShellRunResult
+            {
+                ExitCode = process.ExitCode,
+                Stdout = stdout ?? "",
+                Stderr = stderr ?? ""
+            };
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { /* ignore */ }
+        }
+    }
+
+    private static string ResolvePowerShellPath()
+    {
+        var sys = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        var candidate = Path.Combine(sys, "WindowsPowerShell", "v1.0", "powershell.exe");
+        if (File.Exists(candidate))
+            return candidate;
+        return "powershell.exe";
     }
 
     private static void ValidateCreds(TargetWinRmTestRequest request)
@@ -266,63 +445,22 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
             Password = request.Password
         });
 
-    private async Task<T?> RunJsonAsync<T>(string script, CancellationToken cancellationToken)
+    private static T? TryParseJson<T>(string output)
     {
-        var output = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
         var json = ExtractJson(output);
         if (string.IsNullOrWhiteSpace(json))
             return default;
-        return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions
+        try
         {
-            PropertyNameCaseInsensitive = true
-        });
-    }
-
-    private async Task<string> RunPowerShellAsync(string script, CancellationToken cancellationToken)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -",
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = new Process { StartInfo = psi };
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
-
-        if (!process.Start())
-            throw new InvalidOperationException("Impossible de démarrer powershell.exe");
-
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        await process.StandardInput.WriteAsync(script.AsMemory(), cancellationToken).ConfigureAwait(false);
-        await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-        process.StandardInput.Close();
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-
-        if (process.ExitCode != 0)
-        {
-            var err = stderr.ToString().Trim();
-            if (string.IsNullOrWhiteSpace(err))
-                err = stdout.ToString().Trim();
-            // Scrub potential password echoes (should not happen)
-            _logger.LogError("Target prep PowerShell failed ({Code})", process.ExitCode);
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(err)
-                ? $"PowerShell exit {process.ExitCode}"
-                : err);
+            return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         }
-
-        return stdout.ToString();
+        catch
+        {
+            return default;
+        }
     }
 
-    private static string ExtractJson(string output)
+    internal static string ExtractJson(string output)
     {
         if (string.IsNullOrWhiteSpace(output))
             return "";
@@ -331,11 +469,27 @@ public sealed class PowerShellTargetPrepRunner : ITargetPrepRunner
         var end = trimmed.LastIndexOf('}');
         if (start >= 0 && end > start)
             return trimmed[start..(end + 1)];
-        return trimmed;
+        return "";
     }
 
     private static string Escape(string value) =>
         (value ?? "").Replace("'", "''", StringComparison.Ordinal);
+
+    private static string Truncate(string value, int max) =>
+        value.Length <= max ? value : value[..max] + "…";
+
+    private static string ScrubSecrets(string value)
+    {
+        // Best-effort: never echo env password if PS leaked it
+        return Regex.Replace(value, @"DNSBLOCKER_WINRM_PASS=\S+", "DNSBLOCKER_WINRM_PASS=***", RegexOptions.IgnoreCase);
+    }
+
+    private sealed class WinRmJson
+    {
+        public bool Ok { get; set; }
+        public string? Message { get; set; }
+        public List<string>? Log { get; set; }
+    }
 
     private sealed class PrepJson
     {
