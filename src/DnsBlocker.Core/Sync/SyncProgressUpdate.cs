@@ -12,9 +12,12 @@ public enum SyncProgressPhase
     MergeWhitelist,
     StoreSqlite,
     ChunkPolicies,
+    ClassifyTargets,
+    PrioritizeTargets,
     ApplyTarget,
     ApplyProgress,
     ApplyDone,
+    DeferTarget,
     VerifyProbe,
     BlockTest,
     Done,
@@ -88,12 +91,41 @@ public sealed class SyncProgressUpdate
         Total = policies
     };
 
-    public static SyncProgressUpdate ApplyTarget(string target, int policies) => new()
+    public static SyncProgressUpdate Classify(int targetCount) => new()
+    {
+        Phase = SyncProgressPhase.ClassifyTargets,
+        Message = $"Sync: classifying {targetCount} target(s) (empty vs populated)…",
+        Total = targetCount
+    };
+
+    public static SyncProgressUpdate Prioritize(string summary, IReadOnlyList<SyncTargetPlanEntry> plan) => new()
+    {
+        Phase = SyncProgressPhase.PrioritizeTargets,
+        Message = summary,
+        Current = plan.Count(p => p.ApplyThisRun),
+        Total = plan.Count,
+        Detail = string.Join("; ", plan.Select(p =>
+            $"{p.Target}:{(p.ApplyThisRun ? "apply" : "defer")}"))
+    };
+
+    public static SyncProgressUpdate ApplyTarget(string target, int policies, string? reason = null) => new()
     {
         Phase = SyncProgressPhase.ApplyTarget,
-        Message = $"Sync: applying QRP on {target} ({policies} policies)…",
+        Message = string.IsNullOrWhiteSpace(reason)
+            ? $"Sync: applying QRP on {target} ({policies} policies)…"
+            : $"Sync: applying QRP on {target} ({policies} policies) — {reason}",
         Target = target,
-        Total = policies
+        Total = policies,
+        Detail = reason
+    };
+
+    public static SyncProgressUpdate DeferTarget(string target, int livePolicies, string reason) => new()
+    {
+        Phase = SyncProgressPhase.DeferTarget,
+        Message = $"Sync: deferring {target} (live={livePolicies}) — {reason}",
+        Target = target,
+        Total = livePolicies,
+        Detail = reason
     };
 
     public static SyncProgressUpdate ApplyProgress(string target, int current, int total) => new()

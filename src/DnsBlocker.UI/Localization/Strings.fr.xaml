@@ -32,6 +32,7 @@
   <sys:String x:Key="Btn.PrepareTargetAction">Préparer la cible</sys:String>
   <sys:String x:Key="Btn.TestWinRm">Tester WinRM / CIM</sys:String>
   <sys:String x:Key="Btn.PrepareFirst">Préparer d'abord…</sys:String>
+  <sys:String x:Key="Btn.CopyLogs">Copier les logs</sys:String>
   <sys:String x:Key="Tab.Status">Statut</sys:String>
   <sys:String x:Key="Tab.Configuration">Configuration</sys:String>
   <sys:String x:Key="Tab.Domains">Domaines</sys:String>
@@ -91,6 +92,9 @@
   <sys:String x:Key="Domains.Placeholder">Suffixe DNS machine (workgroup — saisissez un domaine)</sys:String>
   <sys:String x:Key="Domains.Empty">Aucun domaine correspondant dans la blocklist active.</sys:String>
   <sys:String x:Key="Logs.Hint">Journal des actions UI (et logs service). Fichier : %ProgramData%\DnsBlocker\logs\ui-actions.log</sys:String>
+  <sys:String x:Key="Logs.Copied">Copié !</sys:String>
+  <sys:String x:Key="Logs.CopyEmpty">Rien à copier.</sys:String>
+  <sys:String x:Key="Logs.CopyFailed">Échec de la copie.</sys:String>
   <sys:String x:Key="Stats.Period">Période (heures) :</sys:String>
   <sys:String x:Key="Stats.TopN">Top N :</sys:String>
   <sys:String x:Key="Stats.YoutubeCaveat">Limite importante : les pubs YouTube contournent souvent un blocage DNS pur (mêmes hôtes que le CDN vidéo). Les tops ci-dessous servent à vérifier que le hub enregistre bien des requêtes / domaines de listes — pas à garantir zéro pub mobile.</sys:String>

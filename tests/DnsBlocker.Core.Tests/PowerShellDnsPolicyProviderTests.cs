@@ -218,6 +218,67 @@ public class PowerShellDnsPolicyProviderTests
     }
 
     [Fact]
+    public void ValidateApplyOutput_ThrowsOnEmptyInstalledEquals_HashtableUnwrapBug()
+    {
+        // Vincent 1.0.28 windc04: PS `return @{installed=…}` unwrapped → VERIFY installed= enabled=
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PowerShellDnsPolicyProvider.ValidateApplyOutput(
+                "VERIFY installed= enabled= expected=2002 smoke=OK\n",
+                "windc04.ar-systems.fr",
+                2002));
+        Assert.Contains("installed=", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildApplyScript_LiveCountsReturnPsCustomObjectNotHashtable()
+    {
+        var script = PowerShellDnsPolicyProvider.BuildApplyScript(
+            "windc04", "DnsBlocker_", "IGNORE", [["beeg.com"]], restartDnsAfterApply: false);
+        Assert.Contains("Get-DnsBlockerPolicyInventory", script, StringComparison.Ordinal);
+        Assert.Contains("COUNT_SOURCE source=", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("return @{ installed", script);
+        Assert.Contains("$installedLive = [int]$counts.installed", script);
+        Assert.Contains("VERIFY installed=$installedLive enabled=$enabledLive", script);
+        Assert.Contains("sentinel-scan", script, StringComparison.Ordinal);
+        Assert.Contains(@"DNS Server\Policies", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateApplyOutput_ThrowsOnSmokeOkWithInstalledZero()
+    {
+        // Vincent 1.0.31 windc04: VERIFY installed=0 enabled=0 expected=2002 smoke=OK must never Succeeded.
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PowerShellDnsPolicyProvider.ValidateApplyOutput(
+                "VERIFY installed=0 enabled=0 expected=2002 smoke=OK\n",
+                "windc04.ar-systems.fr",
+                2002));
+        Assert.Contains("installed=0", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("will not block", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ValidateApplyOutput_PrefersMatchingVerifyLineOverStaleZero()
+    {
+        PowerShellDnsPolicyProvider.ValidateApplyOutput(
+            "VERIFY installed=0 enabled=0 expected=2 smoke=FAIL\n" +
+            "VERIFY installed=2 enabled=2 expected=2 smoke=OK\nDONE policies=2\n",
+            "windc05",
+            2);
+    }
+
+    [Fact]
+    public void BuildApplyScript_EmbedsInventoryHelperFallbacks()
+    {
+        var script = PowerShellDnsPolicyProvider.BuildApplyScript(
+            "windc05.ar-systems.fr", "DnsBlocker_", "IGNORE", [["beeg.com"]], restartDnsAfterApply: false);
+        Assert.Contains("Get-DnsBlockerPolicyInventory", script, StringComparison.Ordinal);
+        Assert.Contains("name-wildcard", script, StringComparison.Ordinal);
+        Assert.Contains("sentinel-scan", script, StringComparison.Ordinal);
+        Assert.Contains("Test-DnsBlockerNameMatch", script, StringComparison.Ordinal);
+        Assert.Contains("COUNT_SOURCE source=", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EnrichDnsPolicyError_MapsWin32_9971_ToIdempotentGuidance()
     {
         var raw =
