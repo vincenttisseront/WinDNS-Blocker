@@ -42,6 +42,7 @@ PAIRS: list[tuple[str, str, str]] = [
     ("Btn.PrepareTargetAction", "Prepare target", "Préparer la cible"),
     ("Btn.TestWinRm", "Test WinRM / CIM", "Tester WinRM / CIM"),
     ("Btn.PrepareFirst", "Prepare first…", "Préparer d'abord…"),
+    ("Btn.CopyLogs", "Copy", "Copier"),
 
     # --- Tabs ---
     ("Tab.Status", "Status", "Statut"),
@@ -135,6 +136,9 @@ PAIRS: list[tuple[str, str, str]] = [
     ("Logs.Hint",
      "UI action journal (and service logs). File: %ProgramData%\\DnsBlocker\\logs\\ui-actions.log",
      "Journal des actions UI (et logs service). Fichier : %ProgramData%\\DnsBlocker\\logs\\ui-actions.log"),
+    ("Logs.Copied", "Copied!", "Copié !"),
+    ("Logs.CopyEmpty", "Nothing to copy.", "Rien à copier."),
+    ("Logs.CopyFailed", "Copy failed.", "Échec de la copie."),
     ("Stats.Period", "Period (hours):", "Période (heures) :"),
     ("Stats.TopN", "Top N:", "Top N :"),
     ("Stats.YoutubeCaveat",
