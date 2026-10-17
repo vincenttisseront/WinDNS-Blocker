@@ -182,7 +182,7 @@ msiexec /x {868B963E-5A3E-508F-9667-3C1EA232098D} /qn
 msiexec /x {60726742-C306-5F22-B988-CC3CB3A4AC43} /qn
 del /f /q "%ProgramData%\Microsoft\Windows\Start Menu\Programs\WinDNS Blocker\*.*"
 rd /s /q "%ProgramFiles%\DnsBlocker"
-msiexec /i "%USERPROFILE%\Downloads\DnsBlocker-1.0.24.msi" /qb
+msiexec /i "%USERPROFILE%\Downloads\DnsBlocker-1.0.25.msi" /qb
 ```
 
 ProductCodes: 1.0.20=`{868B963E-…098D}`, 1.0.21=`{60726742-…AC43}`, 1.0.22=`{6AEED747-…5C2C}` (1.0.23 stamped at release).

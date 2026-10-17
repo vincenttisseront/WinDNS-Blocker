@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "QRP block for real (1.0.24): sentinel EQ,beeg.com,*.beeg.com; canary+smoke fail sync on public IPs; Enabled=0 fails; auto Verify/Test after sync.",
+  "releaseNotes": "1.0.25: fix hosts-file 0.0.0.0.domain QRP pollution (Vincent windc04); stream ingest + lower sync RSS; full DnsBlocker_* wipe + IGNORE sentinel.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

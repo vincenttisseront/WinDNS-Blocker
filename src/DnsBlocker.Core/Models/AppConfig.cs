@@ -40,12 +40,15 @@ public sealed class AppConfig
 
     /// <summary>
     /// Max domains per QRP policy (further limited by FQDN criterion char budget ~8k).
-    /// Default 200 — 1000-domain chunks produced ~19k-char criteria that Add could accept
-    /// while leaving empty/ineffective FQDN criteria (Succeeded ≠ block).
+    /// Default 150 — keeps criterion strings smaller and sync RSS lower on DCs.
     /// </summary>
-    public int ChunkSize { get; set; } = 200;
+    public int ChunkSize { get; set; } = 150;
 
-    public int MaxParallelTargets { get; set; } = 2;
+    /// <summary>
+    /// Parallel DNS targets during apply. Default 1 — parallel apply doubles PowerShell/manifest
+    /// memory on the hub (observed ~1.1 GB RSS crushing windc04 during 6M ingest).
+    /// </summary>
+    public int MaxParallelTargets { get; set; } = 1;
 
     /// <summary>
     /// After replacing QRP policies, restart the Windows DNS Server service so criteria

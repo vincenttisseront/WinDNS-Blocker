@@ -53,9 +53,26 @@ public static partial class DomainListParser
     public static IReadOnlyCollection<string> ParseDomains(string content)
     {
         var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var raw in content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        if (string.IsNullOrEmpty(content))
+            return domains;
+        using var reader = new StringReader(content);
+        ParseDomainsInto(reader, domains);
+        return domains;
+    }
+
+    /// <summary>
+    /// Stream parse into an existing set — avoids holding the full download string + a second HashSet.
+    /// </summary>
+    public static void ParseDomainsInto(TextReader reader, HashSet<string> domains)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        ArgumentNullException.ThrowIfNull(domains);
+
+        string? raw;
+        while ((raw = reader.ReadLine()) is not null)
         {
-            var line = raw.Trim();
+            // Normalize NBSP / odd whitespace so "0.0.0.0\u00a0host" still splits as hosts-file.
+            var line = raw.Replace('\u00a0', ' ').Replace('\t', ' ').Trim();
             if (line.Length == 0 || line.StartsWith('#') || line.StartsWith('!'))
                 continue;
             if (line.StartsWith('[') && line.EndsWith(']'))
@@ -92,11 +109,59 @@ public static partial class DomainListParser
                 candidate = candidate[2..];
             }
 
+            // Glued hosts sinkholes: "0.0.0.0.evil.com" / "127.0.0.1.evil.com" (no whitespace).
+            candidate = StripLeadingHostsSinkholePrefix(candidate);
+
             if (TryNormalizeDomain(candidate, out var domain))
                 domains.Add(wildcard ? "*." + domain : domain);
         }
+    }
 
-        return domains;
+    /// <summary>
+    /// Strips leading hosts-file sinkhole IPs glued onto hostnames
+    /// (Vincent windc04: Criteria <c>EQ,0.0.0.0.creative.hpyrdr.com.</c> never matched queries).
+    /// </summary>
+    public static string StripLeadingHostsSinkholePrefix(string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+            return candidate;
+
+        var value = candidate.Trim();
+        // Repeat: some broken lists nest prefixes.
+        for (var i = 0; i < 4; i++)
+        {
+            var next = value;
+            if (next.StartsWith("0.0.0.0.", StringComparison.OrdinalIgnoreCase))
+                next = next["0.0.0.0.".Length..];
+            else if (next.StartsWith("127.0.0.1.", StringComparison.OrdinalIgnoreCase))
+                next = next["127.0.0.1.".Length..];
+            else if (next.StartsWith("::1.", StringComparison.OrdinalIgnoreCase))
+                next = next["::1.".Length..];
+            else if (next.StartsWith("0.0.0.0", StringComparison.OrdinalIgnoreCase)
+                     && next.Length > "0.0.0.0".Length
+                     && next["0.0.0.0".Length] is not '.'
+                     && !char.IsDigit(next["0.0.0.0".Length]))
+                next = next["0.0.0.0".Length..];
+            else if (next.StartsWith("127.0.0.1", StringComparison.OrdinalIgnoreCase)
+                     && next.Length > "127.0.0.1".Length
+                     && next["127.0.0.1".Length] is not '.'
+                     && !char.IsDigit(next["127.0.0.1".Length]))
+                next = next["127.0.0.1".Length..];
+            // Hosts shorthand "0.hostname.tld" (single sinkhole label) — not a real public name shape we want in QRP.
+            else if (next.StartsWith("0.", StringComparison.OrdinalIgnoreCase)
+                     && next.Length > 2
+                     && next.IndexOf('.', 2) > 2)
+                next = next[2..];
+            else
+                break;
+
+            next = next.Trim().TrimStart('.');
+            if (next.Length == 0 || string.Equals(next, value, StringComparison.Ordinal))
+                break;
+            value = next;
+        }
+
+        return value;
     }
 
     public static bool TryNormalizeDomain(string input, out string domain)
@@ -105,7 +170,19 @@ public static partial class DomainListParser
         if (string.IsNullOrWhiteSpace(input))
             return false;
 
-        var value = input.Trim().Trim('.').ToLowerInvariant();
+        var value = StripLeadingHostsSinkholePrefix(input)
+            .Trim()
+            .Trim('.')
+            .ToLowerInvariant();
+
+        // Collapse accidental trailing/leading dots after strip.
+        while (value.Contains("..", StringComparison.Ordinal))
+            value = value.Replace("..", ".", StringComparison.Ordinal);
+        value = value.Trim('.');
+
+        if (value.Length == 0)
+            return false;
+
         if (value.StartsWith("http://", StringComparison.Ordinal) || value.StartsWith("https://", StringComparison.Ordinal))
         {
             if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
@@ -116,10 +193,34 @@ public static partial class DomainListParser
         if (IgnoredHosts.Contains(value) || LooksLikeIp(value))
             return false;
 
+        // Reject pure numeric-label IPv4-shaped leftovers (e.g. 0.0.0.0).
+        if (IsNumericLabelHost(value))
+            return false;
+
         if (!DomainRegex().IsMatch(value))
             return false;
 
         domain = value;
+        return true;
+    }
+
+    /// <summary>True when every DNS label is digits only (IPv4-like / junk), e.g. 0.0.0.0.</summary>
+    private static bool IsNumericLabelHost(string value)
+    {
+        var labels = value.Split('.');
+        if (labels.Length < 2)
+            return false;
+        foreach (var label in labels)
+        {
+            if (label.Length == 0)
+                return true;
+            foreach (var ch in label)
+            {
+                if (!char.IsAsciiDigit(ch))
+                    return false;
+            }
+        }
+
         return true;
     }
 
@@ -151,12 +252,32 @@ public static partial class DomainListParser
         if (maxDomainsPerChunk < 1)
             throw new ArgumentOutOfRangeException(nameof(maxDomainsPerChunk));
 
-        var ordered = domains
-            .Where(d => !string.IsNullOrWhiteSpace(d) && !d.Contains(',', StringComparison.Ordinal))
-            .Select(d => d.Trim().Trim('.').ToLowerInvariant())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        // One sorted array (not Distinct+OrderBy+ToList pipeline copies). HashSets are already unique.
+        string[] ordered;
+        if (domains is HashSet<string> set)
+        {
+            ordered = new string[set.Count];
+            var i = 0;
+            foreach (var d in set)
+            {
+                if (string.IsNullOrWhiteSpace(d) || d.Contains(',', StringComparison.Ordinal))
+                    continue;
+                ordered[i++] = d;
+            }
+
+            if (i < ordered.Length)
+                Array.Resize(ref ordered, i);
+            Array.Sort(ordered, StringComparer.OrdinalIgnoreCase);
+        }
+        else
+        {
+            ordered = domains
+                .Where(d => !string.IsNullOrWhiteSpace(d) && !d.Contains(',', StringComparison.Ordinal))
+                .Select(d => d.Trim().Trim('.').ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
 
         var chunks = new List<IReadOnlyList<string>>();
         var current = new List<string>();
@@ -223,6 +344,30 @@ public static partial class DomainListParser
         return result;
     }
 
+    /// <summary>Adds bare apex for every <c>*.apex</c> already in <paramref name="domains"/> (no second set).</summary>
+    public static void EnsureApexForWildcardsInPlace(HashSet<string> domains)
+    {
+        ArgumentNullException.ThrowIfNull(domains);
+        List<string>? toAdd = null;
+        foreach (var domain in domains)
+        {
+            if (!domain.StartsWith("*.", StringComparison.Ordinal) || domain.Length <= 2)
+                continue;
+            var apex = domain[2..];
+            if (!TryNormalizeDomain(apex, out var normalizedApex))
+                continue;
+            if (domains.Contains(normalizedApex))
+                continue;
+            toAdd ??= [];
+            toAdd.Add(normalizedApex);
+        }
+
+        if (toAdd is null)
+            return;
+        foreach (var a in toAdd)
+            domains.Add(a);
+    }
+
     /// <summary>
     /// Drops exact hostnames already covered by a <c>*.apex</c> wildcard (keeps the wildcard
     /// and the bare apex). Shrinks multi-million host+OISD merges so QRP policy count stays
@@ -238,6 +383,15 @@ public static partial class DomainListParser
             set.Add(raw.Trim().Trim('.').ToLowerInvariant());
         }
 
+        CompactCoveredByWildcardsInPlace(set);
+        return set;
+    }
+
+    /// <summary>In-place compact — mutates <paramref name="set"/> (no full copy).</summary>
+    public static void CompactCoveredByWildcardsInPlace(HashSet<string> set)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+
         var wildApexes = set
             .Where(d => d.StartsWith("*.", StringComparison.Ordinal) && d.Length > 2)
             .Select(d => d[2..])
@@ -246,7 +400,7 @@ public static partial class DomainListParser
             .ToList();
 
         if (wildApexes.Count == 0)
-            return set;
+            return;
 
         var remove = new List<string>();
         foreach (var domain in set)
@@ -267,37 +421,57 @@ public static partial class DomainListParser
 
         foreach (var d in remove)
             set.Remove(d);
+    }
 
-        return set;
+    /// <summary>
+    /// Apex expansion + wildcard compact on one set (avoids holding ingest + expanded + compact copies).
+    /// </summary>
+    public static void PrepareForQrpInPlace(HashSet<string> domains)
+    {
+        EnsureApexForWildcardsInPlace(domains);
+        CompactCoveredByWildcardsInPlace(domains);
     }
 
     public static HashSet<string> ApplyWhitelist(IEnumerable<string> blocked, IEnumerable<string> whitelist)
     {
-        var wl = new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase);
-        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = blocked is HashSet<string> hs
+            ? new HashSet<string>(hs, StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(blocked, StringComparer.OrdinalIgnoreCase);
+        ApplyWhitelistInPlace(result, whitelist);
+        return result;
+    }
+
+    /// <summary>Removes whitelist hits from <paramref name="blocked"/> in place (no third giant set).</summary>
+    public static void ApplyWhitelistInPlace(HashSet<string> blocked, IEnumerable<string> whitelist)
+    {
+        ArgumentNullException.ThrowIfNull(blocked);
+        var wl = whitelist as HashSet<string> ?? new HashSet<string>(whitelist, StringComparer.OrdinalIgnoreCase);
+        if (wl.Count == 0)
+            return;
+
+        var remove = new List<string>();
         foreach (var domain in blocked)
         {
             if (wl.Contains(domain))
+            {
+                remove.Add(domain);
                 continue;
+            }
 
-            // Also skip if any whitelist entry is a parent suffix match for exact allow lists that use leading *.
-            var skip = false;
             foreach (var allowed in wl)
             {
                 if (allowed.StartsWith("*.", StringComparison.Ordinal) &&
                     (domain.Equals(allowed[2..], StringComparison.OrdinalIgnoreCase)
                      || domain.EndsWith("." + allowed[2..], StringComparison.OrdinalIgnoreCase)))
                 {
-                    skip = true;
+                    remove.Add(domain);
                     break;
                 }
             }
-
-            if (!skip)
-                result.Add(domain);
         }
 
-        return result;
+        foreach (var d in remove)
+            blocked.Remove(d);
     }
 
     private static bool LooksLikeIp(string value)

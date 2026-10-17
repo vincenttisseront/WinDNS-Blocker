@@ -1,3 +1,4 @@
+using DnsBlocker.Core.Diagnostics;
 using DnsBlocker.Core.Dns;
 using DnsBlocker.Core.Ingest;
 using DnsBlocker.Core.Models;
@@ -45,7 +46,7 @@ public sealed class SyncEngine
         var result = new SyncRunResult { StartedAt = DateTimeOffset.UtcNow };
         try
         {
-            _logger.LogInformation("Starting blocklist sync");
+            _logger.LogInformation("Starting blocklist sync (RSS {Rss})", ProcessMemory.FormatWorkingSet());
             var ingest = await _ingestor.IngestAsync(
                 config.BlocklistsUrl,
                 config.WhitelistsUrl,
@@ -59,25 +60,35 @@ public sealed class SyncEngine
             if (ingest.Errors.Count > 0)
                 _logger.LogWarning("Ingest completed with {Count} source errors", ingest.Errors.Count);
 
-            // QRP EQ,*.apex may not match apex on all builds — expand bare apex.
-            var expanded = DomainListParser.EnsureApexForWildcards(ingest.Domains);
-            result.DomainCount = expanded.Count;
-            _state.ReplaceDomains(expanded);
-
-            // Drop hostnames already covered by *.apex wildcards before chunking (keeps apex).
-            var forQrp = DomainListParser.CompactCoveredByWildcards(expanded);
-            var chunks = DomainListParser.ChunkByFqdnBudget(
-                forQrp,
-                PowerShellDnsPolicyProvider.MaxFqdnCriterionChars,
-                Math.Max(1, config.ChunkSize));
+            // Own the single HashSet — apex + compact in place (no second/third 6M copies).
+            var domains = ingest.Domains;
+            var ingestedCount = domains.Count;
+            DomainListParser.PrepareForQrpInPlace(domains);
+            result.DomainCount = domains.Count;
             _logger.LogInformation(
-                "Prepared {Ingested} ingested → {Expanded} after apex → {ForQrp} after wildcard compact in {Chunks} QRP chunks (budget {Budget} chars, max {MaxPerChunk}/policy)",
-                ingest.Domains.Count,
-                expanded.Count,
-                forQrp.Count,
-                chunks.Count,
+                "Prepared QRP set: ingested={Ingested} → prepared={Prepared} (RSS {Rss})",
+                ingestedCount, domains.Count, ProcessMemory.FormatWorkingSet());
+
+            _state.ReplaceDomains(domains);
+            _logger.LogInformation("SQLite domain replace done (RSS {Rss})", ProcessMemory.FormatWorkingSet());
+
+            var chunks = DomainListParser.ChunkByFqdnBudget(
+                domains,
                 PowerShellDnsPolicyProvider.MaxFqdnCriterionChars,
                 Math.Max(1, config.ChunkSize));
+            var expectedPolicies = PowerShellDnsPolicyProvider.CountExpectedPolicies(chunks);
+
+            // Chunks hold string refs; drop the HashSet shell so GC can reclaim bucket arrays.
+            domains.Clear();
+            ProcessMemory.TrimAfterLargeDrop();
+
+            _logger.LogInformation(
+                "QRP chunks={Chunks} expectedPolicies={Expected} (max {MaxPerChunk}/policy, budget {Budget} chars, RSS {Rss})",
+                chunks.Count,
+                expectedPolicies,
+                Math.Max(1, config.ChunkSize),
+                PowerShellDnsPolicyProvider.MaxFqdnCriterionChars,
+                ProcessMemory.FormatWorkingSet());
 
             var targets = config.DnsTargets
                 .Where(t => !string.IsNullOrWhiteSpace(t))
@@ -100,10 +111,11 @@ public sealed class SyncEngine
                     Target = t,
                     IsLocal = LocalDnsTarget.IsLocalTarget(t),
                     Status = TargetSyncStatus.Idle,
-                    DomainCount = ingest.Domains.Count
+                    DomainCount = result.DomainCount
                 });
             }
 
+            // Default 1 — parallel apply doubles PowerShell + manifest RSS on the DC.
             using var gate = new SemaphoreSlim(Math.Max(1, config.MaxParallelTargets));
             var tasks = result.Targets.Select(async targetResult =>
             {
@@ -112,6 +124,9 @@ public sealed class SyncEngine
                 targetResult.Status = TargetSyncStatus.InProgress;
                 try
                 {
+                    _logger.LogInformation(
+                        "Applying QRP to {Target} (RSS {Rss})",
+                        targetResult.Target, ProcessMemory.FormatWorkingSet());
                     await _provider.ApplyPoliciesAsync(
                         targetResult.Target,
                         config.PolicyNamePrefix,
@@ -121,9 +136,11 @@ public sealed class SyncEngine
                         config.RestartDnsAfterPolicySync).ConfigureAwait(false);
 
                     targetResult.Status = TargetSyncStatus.Succeeded;
-                    targetResult.PolicyCount = chunks.Count;
+                    targetResult.PolicyCount = expectedPolicies;
                     targetResult.Error = null;
-                    _logger.LogInformation("Sync succeeded for {Target}", targetResult.Target);
+                    _logger.LogInformation(
+                        "Sync succeeded for {Target} ({Policies} policies, RSS {Rss})",
+                        targetResult.Target, expectedPolicies, ProcessMemory.FormatWorkingSet());
                 }
                 catch (Exception ex)
                 {
@@ -136,6 +153,7 @@ public sealed class SyncEngine
                     sw.Stop();
                     targetResult.Duration = sw.Elapsed;
                     targetResult.FinishedAt = DateTimeOffset.UtcNow;
+                    ProcessMemory.TrimAfterLargeDrop();
                     gate.Release();
                 }
             });
@@ -143,6 +161,7 @@ public sealed class SyncEngine
             await Task.WhenAll(tasks).ConfigureAwait(false);
             result.FinishedAt = DateTimeOffset.UtcNow;
             _state.SaveSyncResult(result);
+            _logger.LogInformation("Sync finished (RSS {Rss})", ProcessMemory.FormatWorkingSet());
             return result;
         }
         catch (Exception ex)
