@@ -153,6 +153,8 @@
                 <TextBlock Text="{DynamicResource Cfg.SourcesTitle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
                 <TextBlock Text="{DynamicResource Cfg.BlocklistsUrl}" Foreground="{StaticResource MutedBrush}"/>
                 <TextBox x:Name="BlocklistsUrlBox"/>
+                <TextBlock Text="{DynamicResource Cfg.BlocklistsUrlHint}"
+                           Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,2,0,8"/>
                 <TextBlock Text="{DynamicResource Cfg.WhitelistsUrl}" Foreground="{StaticResource MutedBrush}"/>
                 <TextBox x:Name="WhitelistsUrlBox"/>
                 <TextBlock Text="{DynamicResource Cfg.RegexUrl}" Foreground="{StaticResource MutedBrush}"/>
@@ -187,6 +189,18 @@
                   <StackPanel Grid.Column="2">
                     <TextBlock Text="{DynamicResource Cfg.Parallel}" Foreground="{StaticResource MutedBrush}"/>
                     <TextBox x:Name="ParallelBox"/>
+                  </StackPanel>
+                </Grid>
+                <Grid Margin="0,8,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Margin="0,0,8,0">
+                    <TextBlock Text="{DynamicResource Cfg.MaxDomains}" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBox x:Name="MaxDomainsBox"/>
+                    <TextBlock Text="{DynamicResource Cfg.MaxDomainsHint}"
+                               Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
                   </StackPanel>
                 </Grid>
                 <Grid>

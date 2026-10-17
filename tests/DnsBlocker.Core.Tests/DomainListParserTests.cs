@@ -190,4 +190,33 @@ public class DomainListParserTests
         Assert.DoesNotContain("cdn.beeg.com", compacted);
         Assert.Contains("ads.other.com", compacted);
     }
+
+    [Fact]
+    public void ParseDomainsInto_RespectsMaxDomainsCap()
+    {
+        var content = """
+            a.example.com
+            b.example.com
+            c.example.com
+            d.example.com
+            """;
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var reader = new StringReader(content);
+        var capped = DomainListParser.ParseDomainsInto(reader, set, maxDomains: 2);
+        Assert.True(capped);
+        Assert.Equal(2, set.Count);
+    }
+
+    [Fact]
+    public void EnforceMaxDomains_TrimsToBudget()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "z.example.com", "a.example.com", "m.example.com", "b.example.com"
+        };
+        DomainListParser.EnforceMaxDomains(set, 2);
+        Assert.Equal(2, set.Count);
+        Assert.Contains("a.example.com", set);
+        Assert.Contains("b.example.com", set);
+    }
 }

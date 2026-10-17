@@ -36,31 +36,42 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         string action,
         IReadOnlyList<IReadOnlyList<string>> chunks,
         CancellationToken cancellationToken = default,
-        bool restartDnsAfterApply = true)
+        bool restartDnsAfterApply = true,
+        int applyThrottleMs = 15,
+        int applyGcEvery = 25)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("PowerShellDnsPolicyProvider requires Windows.");
 
         var normalizedAction = action.Equals("IGNORE", StringComparison.OrdinalIgnoreCase) ? "IGNORE" : "DENY";
-        // SyncEngine already ChunkByFqdnBudget — reuse when within budget (avoids a second full flatten of 6M domains).
+        // SyncEngine already ChunkByFqdnBudget — reuse when within budget (avoids a second full flatten).
         var normalized = EnsureFqdnBudget(chunks, MaxFqdnCriterionChars);
 
         var manifestPath = Path.Combine(
             Path.GetTempPath(),
-            $"DnsBlocker-qrp-{Guid.NewGuid():N}.json");
+            $"DnsBlocker-qrp-{Guid.NewGuid():N}.ndjson");
 
         try
         {
             var expectedPolicies = CountExpectedPolicies(normalized);
-            WriteManifest(manifestPath, computerName, policyNamePrefix, normalizedAction, normalized, restartDnsAfterApply);
+            WriteManifest(
+                manifestPath,
+                computerName,
+                policyNamePrefix,
+                normalizedAction,
+                normalized,
+                restartDnsAfterApply,
+                Math.Max(0, applyThrottleMs),
+                Math.Max(0, applyGcEvery));
             var script = BuildApplyScriptFromManifest(manifestPath);
             try
             {
                 var output = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
                 ValidateApplyOutput(output, computerName, expectedPolicies);
                 _logger.LogInformation(
-                    "Applied and verified {Count} QRP policies on {Target} (prefix {Prefix}, action {Action}, restartDns={Restart})",
-                    normalized.Count, computerName, policyNamePrefix, normalizedAction, restartDnsAfterApply);
+                    "Applied and verified {Count} QRP policies on {Target} (prefix {Prefix}, action {Action}, restartDns={Restart}, throttle={Throttle}ms/{GcEvery})",
+                    normalized.Count, computerName, policyNamePrefix, normalizedAction, restartDnsAfterApply,
+                    applyThrottleMs, applyGcEvery);
                 if (!string.IsNullOrWhiteSpace(output))
                     _logger.LogDebug("PowerShell output: {Output}", output.Trim());
             }
@@ -169,13 +180,23 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         string policyNamePrefix,
         string action,
         IReadOnlyList<IReadOnlyList<string>> chunks,
-        bool restartDnsAfterApply = true)
+        bool restartDnsAfterApply = true,
+        int applyThrottleMs = 15,
+        int applyGcEvery = 25)
     {
         var normalized = NormalizeChunks(chunks, MaxFqdnCriterionChars);
         var manifestPath = Path.Combine(
             Path.GetTempPath(),
-            $"DnsBlocker-qrp-test-{Guid.NewGuid():N}.json");
-        WriteManifest(manifestPath, computerName, policyNamePrefix, action, normalized, restartDnsAfterApply);
+            $"DnsBlocker-qrp-test-{Guid.NewGuid():N}.ndjson");
+        WriteManifest(
+            manifestPath,
+            computerName,
+            policyNamePrefix,
+            action,
+            normalized,
+            restartDnsAfterApply,
+            Math.Max(0, applyThrottleMs),
+            Math.Max(0, applyGcEvery));
         // Embed path; tests assert script shape. Caller may delete leftover test manifests.
         return BuildApplyScriptFromManifest(manifestPath) +
                Environment.NewLine +
@@ -403,23 +424,31 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
     public static int CountExpectedPolicies(IReadOnlyList<IReadOnlyList<string>> chunks) =>
         chunks.Count + (BuildSentinelFqdn(chunks) is null ? 0 : 1);
 
+    /// <summary>
+    /// NDJSON manifest: line 1 = header (no policies array), then one policy object per line.
+    /// PowerShell streams line-by-line so ConvertFrom-Json never holds the full multi-MB graph.
+    /// </summary>
     private static void WriteManifest(
         string path,
         string computerName,
         string policyNamePrefix,
         string action,
         IReadOnlyList<IReadOnlyList<string>> chunks,
-        bool restartDnsAfterApply)
+        bool restartDnsAfterApply,
+        int applyThrottleMs = 15,
+        int applyGcEvery = 25)
     {
         var isLocal = LocalDnsTarget.IsLocalTarget(computerName);
         // Prefer a domain that should resolve on the public Internet when unblocked (Vincent repro).
+        // One scan only — BuildSentinelFqdn would otherwise re-walk every chunk.
         string? smokeDomain = PreferSmokeDomain(chunks);
-        var sentinelFqdn = BuildSentinelFqdn(chunks);
-        var expected = CountExpectedPolicies(chunks);
+        var sentinelFqdn = smokeDomain is null ? null : $"EQ,{smokeDomain},*.{smokeDomain}";
+        var expected = chunks.Count + (sentinelFqdn is null ? 0 : 1);
 
-        // Stream to disk — avoid a second giant in-memory JSON string for multi-million FQDN manifests.
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
-        using var writer = new Utf8JsonWriter(fs);
+        using var writer = new Utf8JsonWriter(fs, new JsonWriterOptions { SkipValidation = true });
+
+        // Header line
         writer.WriteStartObject();
         writer.WriteString("computer", computerName);
         writer.WriteBoolean("local", isLocal);
@@ -431,37 +460,51 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         else
             writer.WriteString("smokeDomain", smokeDomain);
         writer.WriteNumber("expected", expected);
-        writer.WritePropertyName("policies");
-        writer.WriteStartArray();
+        writer.WriteNumber("throttleMs", applyThrottleMs);
+        writer.WriteNumber("gcEvery", applyGcEvery);
+        writer.WriteEndObject();
+        writer.Flush();
+        fs.WriteByte((byte)'\n');
 
         var order = 1;
         if (sentinelFqdn is not null)
         {
-            WriteManifestPolicy(writer, FormatPolicyName(policyNamePrefix, order), sentinelFqdn, order);
+            WriteManifestPolicyLine(fs, writer, FormatPolicyName(policyNamePrefix, order), sentinelFqdn, order);
             order++;
         }
 
         for (var i = 0; i < chunks.Count; i++)
         {
-            WriteManifestPolicy(
+            // Build FQDN criterion without retaining all Join strings at once — one line, then discard.
+            WriteManifestPolicyLine(
+                fs,
                 writer,
                 FormatPolicyName(policyNamePrefix, order),
                 "EQ," + string.Join(",", chunks[i]),
                 order);
             order++;
-        }
 
-        writer.WriteEndArray();
-        writer.WriteEndObject();
+            // Periodic LOH trim while streaming large manifests (hub RSS during 100k+ policies).
+            if (applyGcEvery > 0 && (i + 1) % Math.Max(applyGcEvery * 4, 100) == 0)
+                Diagnostics.ProcessMemory.TrimAfterLargeDrop();
+        }
     }
 
-    private static void WriteManifestPolicy(Utf8JsonWriter writer, string name, string fqdn, int order)
+    private static void WriteManifestPolicyLine(
+        FileStream fs,
+        Utf8JsonWriter writer,
+        string name,
+        string fqdn,
+        int order)
     {
+        writer.Reset();
         writer.WriteStartObject();
         writer.WriteString("name", name);
         writer.WriteString("fqdn", fqdn);
         writer.WriteNumber("order", order);
         writer.WriteEndObject();
+        writer.Flush();
+        fs.WriteByte((byte)'\n');
     }
 
     /// <summary>
@@ -734,39 +777,58 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               Write-Error ("Manifest not found: " + $manifestPath)
               exit 1
             }
-            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            $computer = [string]$manifest.computer
-            $local = [bool]$manifest.local
-            $prefix = [string]$manifest.prefix
-            $action = [string]$manifest.action
-            $restartDns = [bool]$manifest.restartDns
-            $expected = [int]$manifest.expected
-            $smokeDomain = [string]$manifest.smokeDomain
-
+            # NDJSON: line 1 = header, remaining lines = one policy each (stream — no full JSON graph).
+            $reader = [System.IO.StreamReader]::new($manifestPath, [System.Text.Encoding]::UTF8)
             try {
-              Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix -Local $local
-            } catch {
-              Write-Error (Format-DnsBlockerError $_)
-              exit 1
-            }
+              $headerLine = $reader.ReadLine()
+              if (-not $headerLine) { throw 'Empty NDJSON manifest (missing header).' }
+              $manifest = $headerLine | ConvertFrom-Json
+              $computer = [string]$manifest.computer
+              $local = [bool]$manifest.local
+              $prefix = [string]$manifest.prefix
+              $action = [string]$manifest.action
+              $restartDns = [bool]$manifest.restartDns
+              $expected = [int]$manifest.expected
+              $smokeDomain = [string]$manifest.smokeDomain
+              $throttleMs = 15
+              $gcEvery = 25
+              if ($null -ne $manifest.PSObject.Properties['throttleMs']) { $throttleMs = [int]$manifest.throttleMs }
+              if ($null -ne $manifest.PSObject.Properties['gcEvery']) { $gcEvery = [int]$manifest.gcEvery }
 
-            $i = 0
-            foreach ($pol in @($manifest.policies)) {
-              $i++
-              $name = [string]$pol.name
-              $fqdn = [string]$pol.fqdn
-              $order = [uint32]$pol.order
               try {
-                Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn -Order $order -Local $local
-                if (($i % 50) -eq 0) {
-                  Write-Output ("OK progress " + $i + "/" + $expected)
-                }
+                Remove-DnsBlockerPolicies -Computer $computer -Prefix $prefix -Local $local
               } catch {
-                Write-Error (("Failed policy " + $name + " on " + $computer + " — ") + (Format-DnsBlockerError $_))
+                Write-Error (Format-DnsBlockerError $_)
                 exit 1
               }
+
+              $i = 0
+              while ($null -ne ($polLine = $reader.ReadLine())) {
+                if ([string]::IsNullOrWhiteSpace($polLine)) { continue }
+                $pol = $polLine | ConvertFrom-Json
+                $i++
+                $name = [string]$pol.name
+                $fqdn = [string]$pol.fqdn
+                $order = [uint32]$pol.order
+                try {
+                  Add-DnsBlockerPolicy -Computer $computer -Name $name -Action $action -Fqdn $fqdn -Order $order -Local $local
+                  if ($gcEvery -gt 0 -and ($i % $gcEvery) -eq 0) {
+                    if ($throttleMs -gt 0) { Start-Sleep -Milliseconds $throttleMs }
+                    [GC]::Collect()
+                    [GC]::WaitForPendingFinalizers()
+                    Write-Output ("OK progress " + $i + "/" + $expected + " (GC)")
+                  } elseif (($i % 50) -eq 0) {
+                    Write-Output ("OK progress " + $i + "/" + $expected)
+                  }
+                } catch {
+                  Write-Error (("Failed policy " + $name + " on " + $computer + " — ") + (Format-DnsBlockerError $_))
+                  exit 1
+                }
+              }
+              Write-Output ("OK added=" + $expected)
+            } finally {
+              $reader.Dispose()
             }
-            Write-Output ("OK added=" + $expected)
 
             # Prove smoke apex is actually present in persisted FQDN criteria (not just Enabled count).
             if ($smokeDomain -and $smokeDomain.Length -gt 0) {
@@ -924,6 +986,15 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         if (!process.Start())
             throw new InvalidOperationException("Failed to start powershell.exe");
 
+        try
+        {
+            process.PriorityClass = ProcessPriorityClass.BelowNormal;
+        }
+        catch
+        {
+            // Best-effort — some hosts disallow priority changes.
+        }
+
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         await process.StandardInput.WriteAsync(script.AsMemory(), cancellationToken).ConfigureAwait(false);
@@ -947,34 +1018,45 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
 
     /// <summary>
     /// Prefer well-known blocked apexes that resolve publicly when QRP is ineffective.
+    /// Scans chunks without allocating a full multi-million HashSet (DC RSS).
     /// </summary>
     public static string? PreferSmokeDomain(IReadOnlyList<IReadOnlyList<string>> chunks)
     {
         string[] preferred = ["beeg.com", "pornhub.com", "xvideos.com", "doubleclick.net"];
-        var flat = chunks.SelectMany(c => c).Where(d => !string.IsNullOrWhiteSpace(d));
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var d in flat)
-        {
-            var n = d.Trim().Trim('.').ToLowerInvariant();
-            set.Add(n);
-            if (n.StartsWith("*.", StringComparison.Ordinal))
-                set.Add(n[2..]);
-        }
-
         foreach (var p in preferred)
         {
-            if (set.Contains(p) || set.Contains("*." + p))
-                return p;
+            var wild = "*." + p;
+            foreach (var chunk in chunks)
+            {
+                foreach (var d in chunk)
+                {
+                    if (string.IsNullOrWhiteSpace(d))
+                        continue;
+                    var n = d.AsSpan().Trim().Trim('.');
+                    if (n.Equals(p, StringComparison.OrdinalIgnoreCase)
+                        || n.Equals(wild, StringComparison.OrdinalIgnoreCase))
+                        return p;
+                }
+            }
         }
 
-        foreach (var d in set.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+        string? first = null;
+        foreach (var chunk in chunks)
         {
-            if (d.StartsWith("*.", StringComparison.Ordinal))
-                return d[2..];
-            return d;
+            foreach (var d in chunk)
+            {
+                if (string.IsNullOrWhiteSpace(d))
+                    continue;
+                var n = d.Trim().Trim('.').ToLowerInvariant();
+                if (n.StartsWith("*.", StringComparison.Ordinal))
+                    n = n[2..];
+                if (first is null
+                    || string.Compare(n, first, StringComparison.OrdinalIgnoreCase) < 0)
+                    first = n;
+            }
         }
 
-        return null;
+        return first;
     }
 
     private static string EscapePsString(string value) =>

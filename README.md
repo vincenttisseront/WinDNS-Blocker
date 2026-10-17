@@ -26,7 +26,7 @@ Hub (service + UI)
 
 ### Curated extra blocklists
 
-In addition to Steve Jenkins LoL, the hub can ingest **curated ExtraBlocklistUrls** (toggles in **Configuration**). Defaults on first run:
+**DC recommendation (default):** leave the Steve Jenkins `blocklists.txt` URL **empty** and rely on curated toggles (OISD wildcards). Multi-million host dumps (Steve Jenkins LoL + Chadmayfield) push DnsBlocker.Service toward ~800 MB / high CPU on a domain controller — use **Max domains** (default **400000**, peak working set target **&lt;300 MB**) or curated-only.
 
 | Toggle | Default | Raw URL |
 |--------|---------|---------|
@@ -37,9 +37,15 @@ In addition to Steve Jenkins LoL, the hub can ingest **curated ExtraBlocklistUrl
 
 OISD uses the **domainswild** endpoints (`*.apex`) so Windows DNS QRP `EQ,*.domain` covers subdomains — not the ABP root URLs (`https://big.oisd.nl/`).
 
-**Auto-refresh:** the service re-downloads Steve Jenkins indexes + every enabled curated/custom URL on the **daily scheduled sync** (`ScheduledHour` / `ScheduledMinute`, default **02:00 local**) and whenever you click **Update now**.
+Optional Steve Jenkins list-of-lists URL: `https://raw.githubusercontent.com/stevejenkins/pi-hole-lists/main/blocklists.txt` (paste into Configuration only when needed).
+
+**Auto-refresh:** the service re-downloads the LoL indexes (if configured) + every enabled curated/custom URL on the **daily scheduled sync** (`ScheduledHour` / `ScheduledMinute`, default **02:00 local**) and whenever you click **Update now**.
+
+**Sync on a DC:** process priority drops to **BelowNormal**; QRP Adds are streamed from an **NDJSON** manifest with sleep/`[GC]::Collect` between batches so DNS/AD keep CPU.
 
 **YouTube ads caveat:** DNS-only blocking is **partial**. This list helps on phones that use your DNS, but it will not kill all mobile YouTube ads (app-bundled / same-domain delivery). Pair with client-side blockers when needed.
+
+**Browser vs nslookup:** Firefox **DNS over HTTPS** bypasses your QRP — disable DoH (`about:config` → `network.trr.mode=5`, or Settings → Enable DNS over HTTPS OFF). Prefer `nslookup beeg.com <target>` per farm server. **IGNORE** = drop → timeout; **DENY** = REFUSED (clients may fail over to another resolver).
 
 ## Prerequisites (Windows Server 2022)
 

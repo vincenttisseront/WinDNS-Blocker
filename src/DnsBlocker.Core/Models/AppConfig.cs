@@ -4,11 +4,24 @@ namespace DnsBlocker.Core.Models;
 
 public sealed class AppConfig
 {
-    public string BlocklistsUrl { get; set; } =
+    /// <summary>
+    /// Steve Jenkins pi-hole list-of-lists (multi-million hosts). Opt-in — leave blank and use
+    /// curated OISD wildcards on domain controllers (see <see cref="MaxDomains"/>).
+    /// </summary>
+    public const string SteveJenkinsBlocklistsUrl =
         "https://raw.githubusercontent.com/stevejenkins/pi-hole-lists/main/blocklists.txt";
 
-    public string WhitelistsUrl { get; set; } =
+    public const string SteveJenkinsWhitelistsUrl =
         "https://raw.githubusercontent.com/stevejenkins/pi-hole-lists/main/whitelists.txt";
+
+    /// <summary>
+    /// List-of-lists URL. Default empty = curated-lists-only (recommended on DCs).
+    /// Set to <see cref="SteveJenkinsBlocklistsUrl"/> to pull the full Steve Jenkins indexes.
+    /// </summary>
+    public string BlocklistsUrl { get; set; } = "";
+
+    /// <summary>Whitelist list-of-lists URL. Empty skips LoL whitelist download.</summary>
+    public string WhitelistsUrl { get; set; } = "";
 
     /// <summary>regex.txt is not supported by Windows DNS QRP; kept for UI disclosure only.</summary>
     public string RegexUrl { get; set; } =
@@ -43,6 +56,23 @@ public sealed class AppConfig
     /// Default 150 — keeps criterion strings smaller and sync RSS lower on DCs.
     /// </summary>
     public int ChunkSize { get; set; } = 150;
+
+    /// <summary>
+    /// Hard cap on ingested domains (after whitelist, before QRP prepare).
+    /// Default 400_000 keeps service working set under ~300 MB on a DC.
+    /// Set to 0 for unlimited (not recommended on domain controllers).
+    /// </summary>
+    public int MaxDomains { get; set; } = 400_000;
+
+    /// <summary>
+    /// Pause (ms) every <see cref="PolicyApplyGcEvery"/> QRP Adds so CIM/DNS share the DC CPU.
+    /// </summary>
+    public int PolicyApplyThrottleMs { get; set; } = 15;
+
+    /// <summary>
+    /// Run <c>[GC]::Collect()</c> in the apply PowerShell session every N policy Adds (0 = never).
+    /// </summary>
+    public int PolicyApplyGcEvery { get; set; } = 25;
 
     /// <summary>
     /// Parallel DNS targets during apply. Default 1 — parallel apply doubles PowerShell/manifest
