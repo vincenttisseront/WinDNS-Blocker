@@ -32,6 +32,7 @@
   <sys:String x:Key="Btn.PrepareTargetAction">Prepare target</sys:String>
   <sys:String x:Key="Btn.TestWinRm">Test WinRM / CIM</sys:String>
   <sys:String x:Key="Btn.PrepareFirst">Prepare first…</sys:String>
+  <sys:String x:Key="Btn.CopyLogs">Copy</sys:String>
   <sys:String x:Key="Tab.Status">Status</sys:String>
   <sys:String x:Key="Tab.Configuration">Configuration</sys:String>
   <sys:String x:Key="Tab.Domains">Domains</sys:String>
@@ -91,6 +92,9 @@
   <sys:String x:Key="Domains.Placeholder">Machine DNS suffix (workgroup — enter a domain)</sys:String>
   <sys:String x:Key="Domains.Empty">No matching domain in the active blocklist.</sys:String>
   <sys:String x:Key="Logs.Hint">UI action journal (and service logs). File: %ProgramData%\DnsBlocker\logs\ui-actions.log</sys:String>
+  <sys:String x:Key="Logs.Copied">Copied!</sys:String>
+  <sys:String x:Key="Logs.CopyEmpty">Nothing to copy.</sys:String>
+  <sys:String x:Key="Logs.CopyFailed">Copy failed.</sys:String>
   <sys:String x:Key="Stats.Period">Period (hours):</sys:String>
   <sys:String x:Key="Stats.TopN">Top N:</sys:String>
   <sys:String x:Key="Stats.YoutubeCaveat">Important limit: YouTube ads often bypass pure DNS blocking (same hosts as the video CDN). The tops below help verify the hub records queries / list domains — not that mobile ads are gone.</sys:String>

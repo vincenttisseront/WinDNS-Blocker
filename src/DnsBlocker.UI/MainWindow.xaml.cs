@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using DnsBlocker.Core.Config;
 using DnsBlocker.Core.Diagnostics;
 using DnsBlocker.Core.Ipc;
@@ -30,6 +31,7 @@ public partial class MainWindow : Window
     private bool _syncRunning;
     private bool _syncDetached;
     private string? _lastSyncProgressKey;
+    private DispatcherTimer? _copyFeedbackTimer;
 
     public MainWindow()
     {
@@ -1290,6 +1292,53 @@ public partial class MainWindow : Window
             _ => LangAutoItem
         };
         _languageBoxReady = true;
+    }
+
+    private void CopyLogs_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Prefer the visible buffer (Actions UI + Service sections from ActionJournal.Render).
+            var text = LogsBox.Text;
+            if (string.IsNullOrWhiteSpace(text))
+                text = _journal.Render(_lastServiceLogs);
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                ShowCopyFeedback(Loc.T("Logs.CopyEmpty"), success: false);
+                return;
+            }
+
+            Clipboard.SetText(text);
+            ShowCopyFeedback(Loc.T("Logs.Copied"), success: true);
+        }
+        catch
+        {
+            ShowCopyFeedback(Loc.T("Logs.CopyFailed"), success: false);
+        }
+    }
+
+    private void ShowCopyFeedback(string message, bool success)
+    {
+        CopyLogsFeedback.Text = message;
+        CopyLogsFeedback.Foreground = success
+            ? new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x32))
+            : System.Windows.Media.Brushes.DarkRed;
+        CopyLogsFeedback.Visibility = Visibility.Visible;
+
+        _copyFeedbackTimer?.Stop();
+        _copyFeedbackTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _copyFeedbackTimer.Tick -= ClearCopyFeedback;
+        _copyFeedbackTimer.Tick += ClearCopyFeedback;
+        _copyFeedbackTimer.Start();
+    }
+
+    private void ClearCopyFeedback(object? sender, EventArgs e)
+    {
+        _copyFeedbackTimer?.Stop();
+        CopyLogsFeedback.Visibility = Visibility.Collapsed;
+        CopyLogsFeedback.Text = "";
     }
 
     private void RefreshLogsView()

@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.30: prioritize empty DNS targets first, then refresh already-populated servers incrementally (au fil de l'eau, default 1/sync) so dozens of servers do not make every sync multi-hour; progress logs show why each target is applied or deferred; FR/EN. Builds on 1.0.29 QRP VERIFY.",
+  "releaseNotes": "1.0.31: Copy logs button on Logs tab copies the full Actions UI + Service (FileLogBuffer) buffer to the clipboard with brief Copied! feedback; FR/EN. Builds on 1.0.30 empty-first sync.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
