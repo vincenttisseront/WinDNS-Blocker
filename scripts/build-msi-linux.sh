@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.26: sync resource cap for DCs — MaxDomains 400k, curated-lists-only default, BelowNormal priority, NDJSON streamed QRP apply + GC throttle; Status tip Firefox DoH OFF / IGNORE=timeout vs DENY=REFUSED. Builds on 1.0.25 hosts parse + RSS.",
+  "releaseNotes": "1.0.26: sync resource cap for DCs — MaxDomains 400k, curated-lists-only default, BelowNormal priority, NDJSON streamed QRP apply + GC throttle; Status tip Firefox DoH OFF / IGNORE=timeout vs DENY=REFUSED. Builds on 1.0.25 hosts parse + RSS. File.Version stamp + CA 242 + late REP retained.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
