@@ -52,6 +52,15 @@ public sealed class StateStore : IDisposable
             );
             CREATE INDEX IF NOT EXISTS idx_query_events_ts ON query_events(ts);
             CREATE INDEX IF NOT EXISTS idx_query_events_blocked ON query_events(blocked);
+            CREATE TABLE IF NOT EXISTS stats_ingest (
+              target TEXT PRIMARY KEY COLLATE NOCASE,
+              analytical_enabled INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT,
+              last_ingest_at TEXT,
+              last_event_count INTEGER NOT NULL DEFAULT 0,
+              last_event_utc TEXT,
+              last_record_id INTEGER
+            );
             """;
         cmd.ExecuteNonQuery();
     }
@@ -125,13 +134,170 @@ public sealed class StateStore : IDisposable
 
     public bool IsBlocked(string domain)
     {
+        var normalized = domain.Trim().Trim('.').ToLowerInvariant();
+        if (normalized.Length == 0)
+            return false;
+
         lock (_gate)
         {
             using var conn = Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT 1 FROM domains WHERE domain = $d LIMIT 1;";
-            cmd.Parameters.AddWithValue("$d", domain.Trim('.').ToLowerInvariant());
+            // Exact match, or a stored *.apex covering this name / apex.
+            cmd.CommandText = """
+                SELECT 1 FROM domains
+                WHERE domain = $d
+                   OR domain = ('*.' || $d)
+                   OR (
+                     domain LIKE '*.%'
+                     AND (
+                       $d = substr(domain, 3)
+                       OR $d LIKE ('%.' || substr(domain, 3))
+                     )
+                   )
+                LIMIT 1;
+                """;
+            cmd.Parameters.AddWithValue("$d", normalized);
             return cmd.ExecuteScalar() is not null;
+        }
+    }
+
+    public string? PickSampleBlockedDomain()
+    {
+        lock (_gate)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            // Prefer an exact (non-wildcard) host for Resolve-DnsName tests.
+            cmd.CommandText = """
+                SELECT domain FROM domains
+                WHERE domain NOT LIKE '*.%'
+                ORDER BY length(domain) ASC
+                LIMIT 1;
+                """;
+            var value = cmd.ExecuteScalar() as string;
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+
+            cmd.CommandText = "SELECT domain FROM domains ORDER BY domain LIMIT 1;";
+            value = cmd.ExecuteScalar() as string;
+            return string.IsNullOrWhiteSpace(value) ? null : value.TrimStart('*', '.');
+        }
+    }
+
+    public sealed class StatsIngestMeta
+    {
+        public required string Target { get; init; }
+        public bool AnalyticalEnabled { get; init; }
+        public string? LastError { get; init; }
+        public DateTimeOffset? LastIngestAt { get; init; }
+        public int LastEventCount { get; init; }
+        public DateTimeOffset? LastEventUtc { get; init; }
+        public long? LastRecordId { get; init; }
+    }
+
+    public StatsIngestMeta? GetStatsIngestMeta(string target)
+    {
+        lock (_gate)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT target, analytical_enabled, last_error, last_ingest_at, last_event_count, last_event_utc, last_record_id
+                FROM stats_ingest WHERE target = $t LIMIT 1;
+                """;
+            cmd.Parameters.AddWithValue("$t", target);
+            using var r = cmd.ExecuteReader();
+            if (!r.Read())
+                return null;
+
+            DateTimeOffset? ingestAt = null;
+            if (!r.IsDBNull(3) && DateTimeOffset.TryParse(r.GetString(3), out var ia))
+                ingestAt = ia;
+            DateTimeOffset? eventUtc = null;
+            if (!r.IsDBNull(5) && DateTimeOffset.TryParse(r.GetString(5), out var eu))
+                eventUtc = eu;
+            long? recordId = r.IsDBNull(6) ? null : r.GetInt64(6);
+
+            return new StatsIngestMeta
+            {
+                Target = r.GetString(0),
+                AnalyticalEnabled = r.GetInt64(1) != 0,
+                LastError = r.IsDBNull(2) ? null : r.GetString(2),
+                LastIngestAt = ingestAt,
+                LastEventCount = (int)r.GetInt64(4),
+                LastEventUtc = eventUtc,
+                LastRecordId = recordId
+            };
+        }
+    }
+
+    public IReadOnlyList<StatsIngestMeta> ListStatsIngestMeta()
+    {
+        lock (_gate)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT target, analytical_enabled, last_error, last_ingest_at, last_event_count, last_event_utc, last_record_id
+                FROM stats_ingest ORDER BY target;
+                """;
+            var list = new List<StatsIngestMeta>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                DateTimeOffset? ingestAt = null;
+                if (!r.IsDBNull(3) && DateTimeOffset.TryParse(r.GetString(3), out var ia))
+                    ingestAt = ia;
+                DateTimeOffset? eventUtc = null;
+                if (!r.IsDBNull(5) && DateTimeOffset.TryParse(r.GetString(5), out var eu))
+                    eventUtc = eu;
+                list.Add(new StatsIngestMeta
+                {
+                    Target = r.GetString(0),
+                    AnalyticalEnabled = r.GetInt64(1) != 0,
+                    LastError = r.IsDBNull(2) ? null : r.GetString(2),
+                    LastIngestAt = ingestAt,
+                    LastEventCount = (int)r.GetInt64(4),
+                    LastEventUtc = eventUtc,
+                    LastRecordId = r.IsDBNull(6) ? null : r.GetInt64(6)
+                });
+            }
+
+            return list;
+        }
+    }
+
+    public void UpsertStatsIngestMeta(
+        string target,
+        bool analyticalEnabled,
+        string? lastError,
+        int lastEventCount,
+        DateTimeOffset? lastEventUtc,
+        long? lastRecordId = null)
+    {
+        lock (_gate)
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO stats_ingest(target, analytical_enabled, last_error, last_ingest_at, last_event_count, last_event_utc, last_record_id)
+                VALUES ($t, $ae, $err, $ia, $ec, $eu, $rid)
+                ON CONFLICT(target) DO UPDATE SET
+                  analytical_enabled = excluded.analytical_enabled,
+                  last_error = excluded.last_error,
+                  last_ingest_at = excluded.last_ingest_at,
+                  last_event_count = excluded.last_event_count,
+                  last_event_utc = COALESCE(excluded.last_event_utc, stats_ingest.last_event_utc),
+                  last_record_id = COALESCE(excluded.last_record_id, stats_ingest.last_record_id);
+                """;
+            cmd.Parameters.AddWithValue("$t", target);
+            cmd.Parameters.AddWithValue("$ae", analyticalEnabled ? 1 : 0);
+            cmd.Parameters.AddWithValue("$err", (object?)lastError ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$ia", DateTimeOffset.UtcNow.ToString("O"));
+            cmd.Parameters.AddWithValue("$ec", lastEventCount);
+            cmd.Parameters.AddWithValue("$eu", (object?)lastEventUtc?.ToString("O") ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$rid", (object?)lastRecordId ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
         }
     }
 
@@ -252,8 +418,9 @@ public sealed class StateStore : IDisposable
         }
     }
 
-    public StatsSnapshot GetStats(DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    public StatsSnapshot GetStats(DateTimeOffset fromUtc, DateTimeOffset toUtc, int topN = 20)
     {
+        topN = Math.Clamp(topN, 1, 100);
         lock (_gate)
         {
             using var conn = Open();
@@ -270,17 +437,23 @@ public sealed class StateStore : IDisposable
                 blocked = r.GetInt64(1);
             }
 
+            var topQueried = QueryTop(conn, """
+                SELECT query_name, COUNT(*) AS c FROM query_events
+                WHERE ts >= $f AND ts <= $t
+                GROUP BY query_name ORDER BY c DESC LIMIT $limit;
+                """, fromUtc, toUtc, topN);
+
             var topBlocked = QueryTop(conn, """
                 SELECT query_name, COUNT(*) AS c FROM query_events
                 WHERE blocked = 1 AND ts >= $f AND ts <= $t
-                GROUP BY query_name ORDER BY c DESC LIMIT 20;
-                """, fromUtc, toUtc);
+                GROUP BY query_name ORDER BY c DESC LIMIT $limit;
+                """, fromUtc, toUtc, topN);
 
             var topClients = QueryTop(conn, """
                 SELECT COALESCE(client_ip, 'unknown'), COUNT(*) AS c FROM query_events
                 WHERE blocked = 1 AND ts >= $f AND ts <= $t
-                GROUP BY COALESCE(client_ip, 'unknown') ORDER BY c DESC LIMIT 20;
-                """, fromUtc, toUtc);
+                GROUP BY COALESCE(client_ip, 'unknown') ORDER BY c DESC LIMIT $limit;
+                """, fromUtc, toUtc, topN);
 
             return new StatsSnapshot
             {
@@ -288,21 +461,29 @@ public sealed class StateStore : IDisposable
                 ToUtc = toUtc,
                 TotalQueries = total,
                 BlockedQueries = blocked,
+                TopN = topN,
+                TopQueriedDomains = topQueried,
                 TopBlockedDomains = topBlocked,
                 TopClients = topClients,
                 Message = total == 0
-                    ? "No query events yet. Enable DNS analytical logging and stats collection."
+                    ? "No query events in this window."
                     : null
             };
         }
     }
 
-    private static List<StatRow> QueryTop(SqliteConnection conn, string sql, DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    private static List<StatRow> QueryTop(
+        SqliteConnection conn,
+        string sql,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        int limit)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.Parameters.AddWithValue("$f", fromUtc.ToString("O"));
         cmd.Parameters.AddWithValue("$t", toUtc.ToString("O"));
+        cmd.Parameters.AddWithValue("$limit", limit);
         var rows = new List<StatRow>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())

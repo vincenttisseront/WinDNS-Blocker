@@ -25,6 +25,9 @@ public sealed class UpdateCheckResult
     public UpdateManifest? Manifest { get; set; }
 
     public string? Message { get; set; }
+
+    /// <summary>True when the feed could not be read (404, network, invalid JSON).</summary>
+    public bool FeedError { get; set; }
 }
 
 public sealed class UpdateInstallResult

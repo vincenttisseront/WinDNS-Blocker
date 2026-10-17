@@ -94,7 +94,64 @@ public class UpdateCheckerTests
         var checker = new UpdateChecker(new MockHttpMessageHandler().ToHttpClient());
         var result = await checker.CheckAsync("", currentVersion: "1.0.0");
         Assert.False(result.UpdateAvailable);
+        Assert.False(result.FeedError);
         Assert.Contains("not configured", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckAsync_Feed404_ReturnsFriendlyFeedError()
+    {
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json")
+            .Respond(System.Net.HttpStatusCode.NotFound);
+
+        var checker = new UpdateChecker(mockHttp.ToHttpClient());
+        var result = await checker.CheckAsync(UpdateFeedUrls.DefaultPublicFeedUrl, currentVersion: "1.0.0");
+
+        Assert.False(result.UpdateAvailable);
+        Assert.True(result.FeedError);
+        Assert.Contains("404", result.Message);
+        Assert.Contains("introuvable", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("does not indicate success", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckAsync_RewritesBadLatestDownloadPath()
+    {
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When(UpdateFeedUrls.DefaultPublicFeedUrl)
+            .Respond("application/json", """
+                {
+                  "version": "1.0.11",
+                  "msiUrl": "https://feed.test/app.msi",
+                  "sha256": "deadbeef"
+                }
+                """);
+
+        var checker = new UpdateChecker(mockHttp.ToHttpClient());
+        // Common typo that 404s on GitHub: /releases/download/latest/…
+        var result = await checker.CheckAsync(
+            "https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/latest/version.json",
+            currentVersion: "1.0.0");
+
+        Assert.True(result.UpdateAvailable);
+        Assert.False(result.FeedError);
+        Assert.Equal("1.0.11", result.Manifest!.Version);
+    }
+
+    [Fact]
+    public void Resolve_RewritesDownloadLatestPath()
+    {
+        var fixedUrl = UpdateFeedUrls.Resolve(
+            "https://github.com/vincenttisseront/WinDNS-Blocker/releases/download/latest/version.json");
+        Assert.Equal(UpdateFeedUrls.DefaultPublicFeedUrl, fixedUrl);
+    }
+
+    [Fact]
+    public void AppConfig_DefaultUpdateFeedUrl_IsStableLatest()
+    {
+        var cfg = new DnsBlocker.Core.Models.AppConfig();
+        Assert.Equal(UpdateFeedUrls.DefaultPublicFeedUrl, cfg.UpdateFeedUrl);
     }
 
     [Fact]
@@ -123,11 +180,38 @@ public class UpdateCheckerTests
         Assert.NotNull(result.MsiPath);
         Assert.Contains("/qn", launcher.LastArguments);
         Assert.Contains(result.MsiPath!, launcher.LastArguments);
-        Assert.Equal("msiexec.exe", launcher.LastFileName);
+        Assert.Contains("msiexec.exe", launcher.LastArguments);
+        Assert.Contains("taskkill", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        // Silent path: kill UI, delay, detach via cmd start /b so StopServices cannot kill msiexec.
+        Assert.EndsWith("cmd.exe", launcher.LastFileName, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task InstallAsync_RejectsBadHash()
+    {
+        var msiBytes = Encoding.UTF8.GetBytes("fake-msi-payload");
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://feed.test/app.msi")
+            .Respond("application/octet-stream", new MemoryStream(msiBytes));
+
+        var installer = new UpdateInstaller(
+            mockHttp.ToHttpClient(),
+            new MemoryUpdateFileSystem(),
+            new RecordingProcessLauncher());
+
+        var result = await installer.InstallAsync(new UpdateManifest
+        {
+            Version = "2.0.0",
+            MsiUrl = "https://feed.test/app.msi",
+            Sha256 = new string('0', 64)
+        });
+
+        Assert.False(result.Started);
+        Assert.Contains("SHA-256", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task InstallAsync_RejectsInvalidShaFormatWithoutDownload()
     {
         var mockHttp = new MockHttpMessageHandler();
         mockHttp.When("https://feed.test/app.msi")
@@ -142,11 +226,103 @@ public class UpdateCheckerTests
         {
             Version = "2.0.0",
             MsiUrl = "https://feed.test/app.msi",
-            Sha256 = "00"
+            Sha256 = "deadbeef"
         });
 
         Assert.False(result.Started);
-        Assert.Contains("SHA-256", result.Error);
+        Assert.Contains("SHA-256", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("64", result.Error);
+    }
+
+    [Fact]
+    public async Task InstallAsync_HttpFailure_ReturnsErrorNotThrow()
+    {
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://feed.test/app.msi")
+            .Respond(System.Net.HttpStatusCode.NotFound);
+
+        var installer = new UpdateInstaller(
+            mockHttp.ToHttpClient(),
+            new MemoryUpdateFileSystem(),
+            new RecordingProcessLauncher());
+
+        var result = await installer.InstallAsync(new UpdateManifest
+        {
+            Version = "2.0.0",
+            MsiUrl = "https://feed.test/app.msi",
+            Sha256 = new string('a', 64)
+        });
+
+        Assert.False(result.Started);
+        Assert.Contains("HTTP", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task InstallAsync_MsiexecStartFailure_ReturnsErrorNotThrow()
+    {
+        var msiBytes = Encoding.UTF8.GetBytes("fake-msi-payload");
+        var expectedHash = Convert.ToHexString(SHA256.HashData(msiBytes));
+
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://feed.test/app.msi")
+            .Respond("application/octet-stream", new MemoryStream(msiBytes));
+
+        var installer = new UpdateInstaller(
+            mockHttp.ToHttpClient(),
+            new MemoryUpdateFileSystem(),
+            new ThrowingProcessLauncher());
+
+        var result = await installer.InstallAsync(new UpdateManifest
+        {
+            Version = "2.0.0",
+            MsiUrl = "https://feed.test/app.msi",
+            Sha256 = expectedHash
+        }, silent: true);
+
+        Assert.False(result.Started);
+        Assert.Contains("msiexec", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckAsync_MalformedJson_ReturnsFeedErrorNotThrow()
+    {
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://feed.test/version.json")
+            .Respond("application/json", "{ not-json");
+
+        var checker = new UpdateChecker(mockHttp.ToHttpClient());
+        var result = await checker.CheckAsync("https://feed.test/version.json", currentVersion: "1.0.0");
+
+        Assert.False(result.UpdateAvailable);
+        Assert.True(result.FeedError);
+        Assert.Contains("JSON", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task InstallAsync_UsesNorestartAndDoesNotWaitByDefault()
+    {
+        var msiBytes = Encoding.UTF8.GetBytes("fake-msi-payload");
+        var expectedHash = Convert.ToHexString(SHA256.HashData(msiBytes));
+
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://feed.test/app.msi")
+            .Respond("application/octet-stream", new MemoryStream(msiBytes));
+
+        var files = new MemoryUpdateFileSystem();
+        var launcher = new RecordingProcessLauncher();
+        var installer = new UpdateInstaller(mockHttp.ToHttpClient(), files, launcher, waitForExit: false);
+
+        var result = await installer.InstallAsync(new UpdateManifest
+        {
+            Version = "2.0.0",
+            MsiUrl = "https://feed.test/app.msi",
+            Sha256 = expectedHash
+        }, silent: true);
+
+        Assert.True(result.Started);
+        Assert.Contains("/norestart", launcher.LastArguments);
+        Assert.False(launcher.LastWaitForExit);
+        Assert.Null(result.ExitCode);
     }
 
     private sealed class MemoryUpdateFileSystem : IUpdateFileSystem
@@ -195,12 +371,20 @@ public class UpdateCheckerTests
     {
         public string? LastFileName { get; private set; }
         public string? LastArguments { get; private set; }
+        public bool LastWaitForExit { get; private set; }
 
         public Task<int?> StartAsync(System.Diagnostics.ProcessStartInfo startInfo, bool waitForExit, CancellationToken cancellationToken)
         {
             LastFileName = startInfo.FileName;
             LastArguments = startInfo.Arguments;
-            return Task.FromResult<int?>(0);
+            LastWaitForExit = waitForExit;
+            return Task.FromResult<int?>(waitForExit ? 0 : null);
         }
+    }
+
+    private sealed class ThrowingProcessLauncher : IProcessLauncher
+    {
+        public Task<int?> StartAsync(System.Diagnostics.ProcessStartInfo startInfo, bool waitForExit, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Failed to start msiexec.");
     }
 }

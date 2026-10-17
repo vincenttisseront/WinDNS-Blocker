@@ -1,31 +1,57 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-  Installs the DnsBlocker Windows Service and copies the WPF UI.
+  Installs the DnsBlocker Windows Service and WPF UI (dev / sideload path).
 .NOTES
-  Run on the hub server (one of the DNS servers or a domain member with DNS admin rights).
-  Prerequisites: .NET 8 Runtime (or SDK), DNS Server tools / RSAT DnsServer module, WinRM to targets.
+  Default publish is win-x64 **self-contained** so Windows Server does not need a separate .NET 8 install.
+  For MSI installs prefer the release MSI; this script is the fallback/manual path.
+  Prerequisites: DNS Server tools / RSAT DnsServer on the hub when applying real QRP (mock mode otherwise).
 #>
 [CmdletBinding()]
 param(
     [string]$PublishDir = (Join-Path $PSScriptRoot "..\publish"),
     [string]$InstallRoot = "C:\Program Files\DnsBlocker",
     [string]$ServiceName = "DnsBlocker",
-    [string]$ServiceDisplayName = "WinDNS Blocker Hub"
+    [string]$ServiceDisplayName = "WinDNS Blocker Hub",
+    [switch]$FrameworkDependent,
+    [switch]$SkipPublish
 )
 
 $ErrorActionPreference = "Stop"
-
-Write-Host "Publishing projects..." -ForegroundColor Cyan
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-dotnet publish (Join-Path $repoRoot "src\DnsBlocker.Service\DnsBlocker.Service.csproj") -c Release -o (Join-Path $PublishDir "service")
-dotnet publish (Join-Path $repoRoot "src\DnsBlocker.UI\DnsBlocker.UI.csproj") -c Release -o (Join-Path $PublishDir "ui")
+
+Write-Host "WinDNS Blocker install" -ForegroundColor Cyan
+Write-Host "  SelfContained: $(-not $FrameworkDependent)"
+
+if (-not $SkipPublish) {
+    Write-Host "Publishing projects..." -ForegroundColor Cyan
+    $publishArgs = @("-c", "Release", "-r", "win-x64", "--self-contained", ($(if ($FrameworkDependent) { "false" } else { "true" })))
+    dotnet publish (Join-Path $repoRoot "src\DnsBlocker.Service\DnsBlocker.Service.csproj") -o (Join-Path $PublishDir "service") @publishArgs
+    if ($LASTEXITCODE -ne 0) { throw "Service publish failed." }
+    dotnet publish (Join-Path $repoRoot "src\DnsBlocker.UI\DnsBlocker.UI.csproj") -o (Join-Path $PublishDir "ui") @publishArgs
+    if ($LASTEXITCODE -ne 0) { throw "UI publish failed." }
+}
+
+$serviceSrc = Join-Path $PublishDir "service"
+$uiSrc = Join-Path $PublishDir "ui"
+if (-not (Test-Path (Join-Path $serviceSrc "DnsBlocker.Service.exe"))) {
+    throw "Missing DnsBlocker.Service.exe under $serviceSrc"
+}
+if (-not (Test-Path (Join-Path $uiSrc "DnsBlocker.UI.exe"))) {
+    throw "Missing DnsBlocker.UI.exe under $uiSrc"
+}
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot "UI") | Out-Null
 New-Item -ItemType Directory -Force -Path "C:\ProgramData\DnsBlocker\logs" | Out-Null
+# SIDs work on FR/EN Server (BUILTIN\Administrators often fails as "Administrateurs")
+& icacls.exe "C:\ProgramData\DnsBlocker" /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' 2>$null | Out-Null
 
-Copy-Item -Path (Join-Path $PublishDir "service\*") -Destination $InstallRoot -Recurse -Force
-Copy-Item -Path (Join-Path $PublishDir "ui\*") -Destination (Join-Path $InstallRoot "UI") -Recurse -Force
+Write-Host "Copying binaries to $InstallRoot ..."
+Copy-Item -Path (Join-Path $serviceSrc "*") -Destination $InstallRoot -Recurse -Force
+Copy-Item -Path (Join-Path $uiSrc "*") -Destination (Join-Path $InstallRoot "UI") -Recurse -Force
+Copy-Item -Path (Join-Path $PSScriptRoot "doctor.ps1") -Destination (Join-Path $InstallRoot "doctor.ps1") -Force
+Copy-Item -Path (Join-Path $PSScriptRoot "Verify-Install.cmd") -Destination (Join-Path $InstallRoot "Verify-Install.cmd") -Force -ErrorAction SilentlyContinue
 
 $svcExe = Join-Path $InstallRoot "DnsBlocker.Service.exe"
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -37,17 +63,38 @@ if ($existing) {
 }
 
 Write-Host "Creating service $ServiceName..."
+# Quote path for spaces under Program Files
 New-Service -Name $ServiceName `
     -BinaryPathName "`"$svcExe`"" `
     -DisplayName $ServiceDisplayName `
     -Description "Synchronizes Steve Jenkins-style DNS blocklists into Windows DNS Query Resolution Policies across a farm of DNS servers." `
     -StartupType Automatic | Out-Null
 
-# Allow the service account to manage DNS remotely as needed (default LocalSystem).
-Start-Service -Name $ServiceName
-Write-Host "Service started." -ForegroundColor Green
+try {
+    Start-Service -Name $ServiceName -ErrorAction Stop
+    Start-Sleep -Seconds 2
+    $status = (Get-Service -Name $ServiceName).Status
+    if ($status -ne "Running") {
+        throw "Service status is $status"
+    }
+    Write-Host "Service started." -ForegroundColor Green
+}
+catch {
+    Write-Host "ERROR: service failed to start: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "See C:\ProgramData\DnsBlocker\logs\service-startup-failure.log and Event Viewer."
+    & (Join-Path $InstallRoot "doctor.ps1")
+    throw
+}
+
+$doctor = Join-Path $InstallRoot "doctor.ps1"
+Write-Host "Running doctor..." -ForegroundColor Cyan
+& $doctor -StartServiceIfStopped
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Install completed with doctor failures — fix before using the UI." -ForegroundColor Yellow
+    exit $LASTEXITCODE
+}
 
 $ui = Join-Path $InstallRoot "UI\DnsBlocker.UI.exe"
 Write-Host "UI: $ui"
 Write-Host "Config: C:\ProgramData\DnsBlocker\config.json"
-Write-Host "Done. Configure DNS targets in the UI, then click 'Mettre a jour maintenant'."
+Write-Host "Done."

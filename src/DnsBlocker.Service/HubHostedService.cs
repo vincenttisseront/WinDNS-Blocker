@@ -11,6 +11,7 @@ public sealed class HubHostedService : BackgroundService
     private readonly ILogger<HubHostedService> _logger;
     private DateTimeOffset? _nextScheduledUtc;
     private DateTimeOffset _nextUpdateCheckUtc;
+    private DateTimeOffset _nextStatsPollUtc;
 
     public HubHostedService(HubRuntime runtime, FileLogBuffer logs, ILogger<HubHostedService> logger)
     {
@@ -26,6 +27,7 @@ public sealed class HubHostedService : BackgroundService
         _nextScheduledUtc = _runtime.ComputeNextScheduledUtc(DateTimeOffset.Now);
         // Stagger first update check shortly after start, then daily.
         _nextUpdateCheckUtc = DateTimeOffset.UtcNow.AddMinutes(2);
+        _nextStatsPollUtc = DateTimeOffset.UtcNow.AddSeconds(20);
 
         var ipc = new IpcServer(_runtime, () => _nextScheduledUtc, _logger);
         var ipcTask = ipc.RunAsync(stoppingToken);
@@ -64,6 +66,21 @@ public sealed class HubHostedService : BackgroundService
                     }
 
                     _nextUpdateCheckUtc = DateTimeOffset.UtcNow.AddDays(1);
+                }
+
+                if (nowUtc >= _nextStatsPollUtc)
+                {
+                    try
+                    {
+                        await _runtime.PollStatsAsync(stoppingToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Stats poll failed");
+                        _logs.Write($"Stats poll failed: {ex.Message}");
+                    }
+
+                    _nextStatsPollUtc = DateTimeOffset.UtcNow.AddSeconds(30);
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken).ConfigureAwait(false);

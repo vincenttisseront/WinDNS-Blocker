@@ -1,18 +1,24 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Net.Http;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace DnsBlocker.Core.Updates;
 
 /// <summary>
 /// Downloads an MSI, verifies SHA-256, then launches msiexec.
 /// <list type="bullet">
-/// <item><description><c>silent=true</c> → <c>msiexec /i … /qn</c> (service / LocalSystem; no UI).</description></item>
-/// <item><description><c>silent=false</c> → <c>msiexec /i … /qb</c> with <c>Verb=runas</c> so the interactive UI triggers UAC.</description></item>
+/// <item><description><c>silent=true</c> → detached <c>msiexec /i … /qn /norestart</c> (service / LocalSystem; survives StopServices).</description></item>
+/// <item><description><c>silent=false</c> → <c>msiexec /i … /qb /norestart</c> with <c>Verb=runas</c> so the interactive UI triggers UAC.</description></item>
 /// </list>
-/// File I/O, HTTP, hashing, and process start are injectable for unit tests.
+/// Never terminates the host process after starting msiexec — the UI/service stay alive and report errors via
+/// <see cref="UpdateInstallResult"/>. File I/O, HTTP, hashing, and process start are injectable for unit tests.
 /// </summary>
 public sealed class UpdateInstaller
 {
+    private static readonly Regex Sha256Hex = new("^[0-9a-fA-F]{64}$", RegexOptions.Compiled);
+
     private readonly HttpClient _http;
     private readonly IUpdateFileSystem _files;
     private readonly IProcessLauncher _process;
@@ -30,6 +36,7 @@ public sealed class UpdateInstaller
         _files = files ?? new DefaultUpdateFileSystem();
         _process = process ?? new DefaultProcessLauncher();
         // Service upgrades should not WaitForExit — msiexec stops this process via MSI ServiceControl.
+        // Never WaitForExit from the in-app UI path either: the host must stay alive to show MessageBox errors.
         _waitForExit = waitForExit;
     }
 
@@ -39,40 +46,124 @@ public sealed class UpdateInstaller
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(manifest.MsiUrl))
-            return Fail("Manifest MSI URL is empty.");
+            return Fail("URL MSI du manifeste vide. / Manifest MSI URL is empty.");
         if (string.IsNullOrWhiteSpace(manifest.Sha256))
-            return Fail("Manifest SHA-256 is empty.");
+            return Fail("SHA-256 du manifeste vide. / Manifest SHA-256 is empty.");
+
+        var expectedSha = NormalizeSha(manifest.Sha256);
+        if (expectedSha is null)
+        {
+            return Fail(
+                "SHA-256 du manifeste invalide (64 caractères hex attendus). / " +
+                "Manifest SHA-256 is invalid (expected 64 hex characters).");
+        }
 
         string? msiPath = null;
         try
         {
             msiPath = _files.GetTempFilePath(".msi");
-            await using (var remote = await _http.GetStreamAsync(manifest.MsiUrl, cancellationToken).ConfigureAwait(false))
-            await using (var local = _files.OpenWrite(msiPath))
+
+            HttpResponseMessage response;
+            try
             {
-                await remote.CopyToAsync(local, cancellationToken).ConfigureAwait(false);
+                response = await _http.GetAsync(manifest.MsiUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return Fail("Délai dépassé lors du téléchargement MSI. / MSI download timed out.");
+            }
+            catch (HttpRequestException ex)
+            {
+                return Fail("Échec HTTP du téléchargement MSI. / MSI download HTTP failed. " + Truncate(ex.Message, 160));
+            }
+            catch (IOException ex)
+            {
+                return Fail("Erreur I/O lors du téléchargement MSI. / MSI download I/O error. " + Truncate(ex.Message, 160));
             }
 
-            var actualHash = await ComputeSha256HexAsync(msiPath, cancellationToken).ConfigureAwait(false);
-            if (!HashesEqual(actualHash, manifest.Sha256))
+            using (response)
+            {
+                if (!response.IsSuccessStatusCode)
+                {
+                    var code = (int)response.StatusCode;
+                    return Fail(
+                        $"Téléchargement MSI refusé (HTTP {code}). / MSI download rejected (HTTP {code}).");
+                }
+
+                try
+                {
+                    await using var remote = await response.Content.ReadAsStreamAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    await using var local = _files.OpenWrite(msiPath);
+                    await remote.CopyToAsync(local, cancellationToken).ConfigureAwait(false);
+                }
+                catch (HttpRequestException ex)
+                {
+                    _files.TryDelete(msiPath);
+                    return Fail("Échec HTTP pendant le téléchargement MSI. / HTTP failed while downloading MSI. " +
+                                Truncate(ex.Message, 160));
+                }
+                catch (IOException ex)
+                {
+                    _files.TryDelete(msiPath);
+                    return Fail("Erreur I/O pendant l'écriture du MSI. / I/O error writing MSI. " +
+                                Truncate(ex.Message, 160));
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    _files.TryDelete(msiPath);
+                    return Fail("Accès refusé à l'écriture du MSI temporaire. / Access denied writing temp MSI. " +
+                                Truncate(ex.Message, 120));
+                }
+            }
+
+            string actualHash;
+            try
+            {
+                actualHash = await ComputeSha256HexAsync(msiPath, cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException ex)
             {
                 _files.TryDelete(msiPath);
-                return Fail($"SHA-256 mismatch (expected {manifest.Sha256}, got {actualHash}).");
+                return Fail("Impossible de lire le MSI pour vérification SHA-256. / Cannot read MSI for SHA-256. " +
+                            Truncate(ex.Message, 160));
+            }
+            catch (CryptographicException ex)
+            {
+                _files.TryDelete(msiPath);
+                return Fail("Échec du calcul SHA-256. / SHA-256 computation failed. " + Truncate(ex.Message, 120));
             }
 
-            var args = $"/i \"{msiPath}\" {(silent ? "/qn" : "/qb")}";
-            var startInfo = new ProcessStartInfo
+            if (!string.Equals(actualHash, expectedSha, StringComparison.OrdinalIgnoreCase))
             {
-                FileName = "msiexec.exe",
-                Arguments = args,
-                UseShellExecute = !silent,
-                // Interactive UI path: request elevation (UAC). Service path is already LocalSystem.
-                Verb = silent ? "" : "runas",
-                CreateNoWindow = silent,
-                WindowStyle = silent ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal
-            };
+                _files.TryDelete(msiPath);
+                return Fail(
+                    $"SHA-256 incorrect (attendu {expectedSha}, reçu {actualHash}). / " +
+                    $"SHA-256 mismatch (expected {expectedSha}, got {actualHash}).");
+            }
 
-            var exit = await _process.StartAsync(startInfo, _waitForExit, cancellationToken).ConfigureAwait(false);
+            // /norestart: never reboot (would kill UI). Fire-and-forget msiexec; do not Kill/Exit host.
+            // Silent (service) path: detach via cmd start /b so SCM StopServices does not kill msiexec
+            // mid-upgrade (broken install + UI looking "crashed").
+            var startInfo = BuildMsiexecStartInfo(msiPath, silent);
+
+            int? exit;
+            try
+            {
+                exit = await _process.StartAsync(startInfo, _waitForExit, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Win32Exception ex)
+            {
+                return Fail(
+                    $"Impossible de démarrer msiexec (Win32 {ex.NativeErrorCode}). / " +
+                    $"Failed to start msiexec (Win32 {ex.NativeErrorCode}). " + Truncate(ex.Message, 120));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Fail(
+                    "Impossible de démarrer msiexec. / Failed to start msiexec. " + Truncate(ex.Message, 160));
+            }
 
             return new UpdateInstallResult
             {
@@ -81,16 +172,73 @@ public sealed class UpdateInstaller
                 MsiPath = msiPath,
                 ExitCode = exit,
                 Error = _waitForExit && exit is not 0 and not null
-                    ? $"msiexec exited with code {exit}."
+                    ? $"msiexec a quitté avec le code {exit}. / msiexec exited with code {exit}."
                     : null
             };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (msiPath is not null)
+                _files.TryDelete(msiPath);
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            if (msiPath is not null)
+                _files.TryDelete(msiPath);
+            return Fail("Échec HTTP de la mise à jour. / Update HTTP failed. " + Truncate(ex.Message, 160));
+        }
+        catch (IOException ex)
+        {
+            if (msiPath is not null)
+                _files.TryDelete(msiPath);
+            return Fail("Erreur I/O de la mise à jour. / Update I/O error. " + Truncate(ex.Message, 160));
         }
         catch (Exception ex)
         {
             if (msiPath is not null)
                 _files.TryDelete(msiPath);
-            return Fail(ex.Message);
+            return Fail("Échec de l'installation de la mise à jour. / Update install failed. " +
+                        Truncate(ex.Message, 160));
         }
+    }
+
+    /// <summary>
+    /// Silent installs: kill UI (unlock files), delay, then detached msiexec so StopServices
+    /// cannot abort the upgrade mid-flight. Interactive: msiexec + UAC (runas); caller should exit UI.
+    /// </summary>
+    internal static ProcessStartInfo BuildMsiexecStartInfo(string msiPath, bool silent)
+    {
+        // /norestart: never reboot. Quiet UI flags only differ.
+        var msiexecArgs = $"/i \"{msiPath}\" {(silent ? "/qn" : "/qb")} /norestart";
+
+        if (silent)
+        {
+            // taskkill unlocks DnsBlocker.UI.exe; ping delay lets handles release before InstallFiles.
+            // start /b detaches msiexec from the service process tree.
+            var cmd =
+                "taskkill /IM DnsBlocker.UI.exe /F >nul 2>&1 & " +
+                "ping -n 4 127.0.0.1 >nul & " +
+                "start \"DnsBlockerMsi\" /b msiexec.exe " + msiexecArgs;
+            return new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                Arguments = "/c " + cmd,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+        }
+
+        return new ProcessStartInfo
+        {
+            FileName = "msiexec.exe",
+            Arguments = msiexecArgs,
+            UseShellExecute = true,
+            Verb = "runas",
+            CreateNoWindow = false,
+            WindowStyle = ProcessWindowStyle.Normal
+        };
     }
 
     private async Task<string> ComputeSha256HexAsync(string path, CancellationToken cancellationToken)
@@ -100,14 +248,21 @@ public sealed class UpdateInstaller
         return Convert.ToHexString(hash);
     }
 
-    private static bool HashesEqual(string actualHex, string expected)
+    private static string? NormalizeSha(string expected)
     {
-        var normalizedExpected = expected.Trim().Replace("-", "", StringComparison.Ordinal);
-        return string.Equals(actualHex, normalizedExpected, StringComparison.OrdinalIgnoreCase);
+        var normalized = expected.Trim().Replace("-", "", StringComparison.Ordinal);
+        return Sha256Hex.IsMatch(normalized) ? normalized : null;
     }
 
     private static UpdateInstallResult Fail(string error) =>
         new() { Started = false, Success = false, Error = error };
+
+    private static string Truncate(string message, int max)
+    {
+        if (string.IsNullOrEmpty(message) || message.Length <= max)
+            return message;
+        return message[..max] + "…";
+    }
 }
 
 public interface IUpdateFileSystem
@@ -120,7 +275,7 @@ public interface IUpdateFileSystem
 
 public interface IProcessLauncher
 {
-    /// <param name="waitForExit">When false, fire-and-forget (preferred for in-service upgrades).</param>
+    /// <param name="waitForExit">When false, fire-and-forget (preferred for in-app / in-service upgrades).</param>
     Task<int?> StartAsync(ProcessStartInfo startInfo, bool waitForExit, CancellationToken cancellationToken);
 }
 
@@ -156,17 +311,40 @@ public sealed class DefaultProcessLauncher : IProcessLauncher
 {
     public Task<int?> StartAsync(ProcessStartInfo startInfo, bool waitForExit, CancellationToken cancellationToken)
     {
-        var process = Process.Start(startInfo)
-                      ?? throw new InvalidOperationException("Failed to start msiexec.");
+        // Start msiexec only — never Kill/Exit the host process (UI must stay open for MessageBox).
+        Process? process;
+        try
+        {
+            process = Process.Start(startInfo);
+        }
+        catch (Win32Exception)
+        {
+            throw;
+        }
+
+        if (process is null)
+            throw new InvalidOperationException("Process.Start returned null for msiexec.");
+
         if (!waitForExit)
+        {
+            // Detach: do not WaitForExit, do not Kill host or child from here.
+            process.Dispose();
             return Task.FromResult<int?>(null);
+        }
 
         return WaitAsync(process, cancellationToken);
     }
 
     private static async Task<int?> WaitAsync(Process process, CancellationToken cancellationToken)
     {
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        return process.ExitCode;
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            return process.ExitCode;
+        }
+        finally
+        {
+            process.Dispose();
+        }
     }
 }
