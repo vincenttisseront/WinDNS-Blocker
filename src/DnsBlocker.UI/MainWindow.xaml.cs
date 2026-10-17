@@ -862,10 +862,13 @@ public partial class MainWindow : Window
         if (probe is null || probe.Targets.Count == 0)
         {
             PolicyStatusGrid.ItemsSource = null;
+            // Empty DataGrid inside a ScrollViewer otherwise expands to a viewport-tall void.
+            PolicyStatusGrid.Height = 40;
             PolicyProbeSummary.Text = probe?.Message ?? Loc.T("Status.NoProbeYet");
             return;
         }
 
+        PolicyStatusGrid.ClearValue(FrameworkElement.HeightProperty);
         PolicyStatusGrid.ItemsSource = probe.Targets.Select(t => new
         {
             t.Target,

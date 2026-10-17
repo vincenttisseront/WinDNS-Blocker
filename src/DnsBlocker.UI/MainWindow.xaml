@@ -64,16 +64,12 @@
               </StackPanel>
             </Border>
 
-            <DockPanel Margin="0,0,0,8">
-              <Button x:Name="VerifyPoliciesButton" DockPanel.Dock="Right" Content="{DynamicResource Btn.VerifyPolicies}"
-                      Click="VerifyPolicies_Click" Margin="8,0,0,0"/>
-              <TextBlock Text="{DynamicResource Status.LastSyncTitle}" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            </DockPanel>
+            <TextBlock Text="{DynamicResource Status.LastSyncTitle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
             <TextBlock x:Name="SucceededHintText" Text="{DynamicResource Status.SucceededHint}"
                        Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
             <DataGrid x:Name="TargetsGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
                       CanUserAddRows="False" GridLinesVisibility="Horizontal" BorderBrush="{StaticResource BorderBrushKey}"
-                      Margin="0,0,0,16">
+                      VerticalAlignment="Top" MaxHeight="220" Margin="0,0,0,16">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Server}" Binding="{Binding Target}" Width="2*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Kind}" Binding="{Binding Kind}" Width="*"/>
@@ -84,12 +80,21 @@
               </DataGrid.Columns>
             </DataGrid>
 
-            <TextBlock Text="{DynamicResource Status.LivePoliciesTitle}" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <!-- Verify lives next to the live probe (not Last sync) so the CTA matches Status.NoProbeYet. -->
+            <DockPanel Margin="0,0,0,4" LastChildFill="True">
+              <Button x:Name="VerifyPoliciesButton" DockPanel.Dock="Right" Content="{DynamicResource Btn.VerifyPolicies}"
+                      Click="VerifyPolicies_Click" Margin="8,0,0,0" VerticalAlignment="Center"/>
+              <TextBlock Text="{DynamicResource Status.LivePoliciesTitle}" FontWeight="SemiBold" VerticalAlignment="Center"
+                         TextWrapping="Wrap"/>
+            </DockPanel>
             <TextBlock x:Name="PolicyProbeSummary" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"
                        Text="{DynamicResource Status.NoProbeYet}"/>
+            <!-- Empty DataGrid inside ScrollViewer otherwise measures to a huge viewport-tall void. -->
             <DataGrid x:Name="PolicyStatusGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
                       CanUserAddRows="False" GridLinesVisibility="Horizontal" BorderBrush="{StaticResource BorderBrushKey}"
-                      Margin="0,0,0,8">
+                      VerticalAlignment="Top" Height="40" MinHeight="0" MaxHeight="200" Margin="0,0,0,8"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                      ScrollViewer.CanContentScroll="True">
               <DataGrid.Columns>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Server}" Binding="{Binding Target}" Width="2*"/>
                 <DataGridTextColumn Header="{DynamicResource Status.Col.Kind}" Binding="{Binding Kind}" Width="*"/>
@@ -102,14 +107,19 @@
               </DataGrid.Columns>
             </DataGrid>
 
-            <Border Background="#EEF6F0" BorderBrush="#2E7D4F" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,8,0,8">
+            <!-- Content-sized card (not a stretch fill). Full #EEF6F0 fill previously read as a huge empty green panel
+                 when BlockTest strings were missing and the empty PolicyStatusGrid expanded above. -->
+            <Border x:Name="BlockTestPanel" Background="{StaticResource PanelBrush}" BorderBrush="#2E7D4F"
+                    BorderThickness="3,1,1,1" CornerRadius="4" Padding="12" Margin="0,8,0,8"
+                    VerticalAlignment="Top" HorizontalAlignment="Stretch">
               <StackPanel>
                 <TextBlock Text="{DynamicResource Status.BlockTestTitle}" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,4"/>
                 <TextBlock Text="{DynamicResource Status.BlockTestHint}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                  <TextBox x:Name="BlockTestDomainBox" Width="280" Margin="0,0,8,0" ToolTip="beeg.com"/>
+                  <TextBox x:Name="BlockTestDomainBox" Width="280" MinWidth="160" Margin="0,0,8,0" ToolTip="beeg.com"
+                           VerticalAlignment="Center"/>
                   <Button x:Name="BlockTestButton" Content="{DynamicResource Btn.TestBlock}" Click="TestBlock_Click"
-                          FontWeight="SemiBold" Padding="16,6"/>
+                          FontWeight="SemiBold" Padding="16,6" MinWidth="120" VerticalAlignment="Center"/>
                 </StackPanel>
                 <TextBlock x:Name="BlockTestResultText" TextWrapping="Wrap" Margin="0,4,0,0"/>
               </StackPanel>

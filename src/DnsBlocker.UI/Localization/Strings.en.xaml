@@ -12,6 +12,7 @@
   <sys:String x:Key="Btn.StartService">Start service</sys:String>
   <sys:String x:Key="Btn.RetryConnection">Retry connection</sys:String>
   <sys:String x:Key="Btn.VerifyPolicies">Verify QRP policies</sys:String>
+  <sys:String x:Key="Btn.TestBlock">Test blocking</sys:String>
   <sys:String x:Key="Btn.SaveConfig">Save configuration</sys:String>
   <sys:String x:Key="Btn.PrepareTarget">Prepare a target (WinRM)…</sys:String>
   <sys:String x:Key="Btn.AddLocalDns">Add this server (local DNS)</sys:String>
@@ -38,7 +39,7 @@
   <sys:String x:Key="Tab.Stats">Stats</sys:String>
   <sys:String x:Key="Status.Connecting">Connecting to service…</sys:String>
   <sys:String x:Key="Status.LastSyncTitle">Last sync (hub → DNS push)</sys:String>
-  <sys:String x:Key="Status.SucceededHint">A « Succeeded » status means the hub pushed chunks — not that policies are still present/enabled on the server.</sys:String>
+  <sys:String x:Key="Status.SucceededHint">After each sync the hub auto-verifies Enabled QRP counts (table below). « Succeeded » alone is not enough — use Test blocking for beeg.com.</sys:String>
   <sys:String x:Key="Status.Col.Server">Server</sys:String>
   <sys:String x:Key="Status.Col.Kind">Kind</sys:String>
   <sys:String x:Key="Status.Kind.Local">Local (no WinRM)</sys:String>
@@ -48,7 +49,9 @@
   <sys:String x:Key="Status.Col.Duration">Duration</sys:String>
   <sys:String x:Key="Status.Col.Error">Error</sys:String>
   <sys:String x:Key="Status.LivePoliciesTitle">Installed QRP policies (live Get-DnsServerQueryResolutionPolicy probe)</sys:String>
-  <sys:String x:Key="Status.NoProbeYet">No probe yet — click « Verify QRP policies ».</sys:String>
+  <sys:String x:Key="Status.NoProbeYet">No probe yet — runs automatically after sync, or click « Verify QRP policies ».</sys:String>
+  <sys:String x:Key="Status.BlockTestTitle">Test blocking (nslookup against DNS target)</sys:String>
+  <sys:String x:Key="Status.BlockTestHint">Enter a blocklisted domain (e.g. beeg.com). Expect REFUSED / timeout / NXDOMAIN — not Cloudflare IPs. Client DNS must be this server only (no DoH).</sys:String>
   <sys:String x:Key="Status.Col.Applied">Applied</sys:String>
   <sys:String x:Key="Status.Col.Installed">Installed</sys:String>
   <sys:String x:Key="Status.Col.Enabled">Enabled</sys:String>

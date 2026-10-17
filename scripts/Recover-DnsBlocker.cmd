@@ -25,8 +25,8 @@ if not "%~1"=="" set "MSI=%~1"
 if not defined MSI (
   echo [FAIL] No DnsBlocker-*.msi found.
   echo Download:
-  echo   https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/DnsBlocker-1.0.22.msi
-  echo Then: Recover-DnsBlocker.cmd "C:\path\DnsBlocker-1.0.22.msi"
+  echo   https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/DnsBlocker-1.0.23.msi
+  echo Then: Recover-DnsBlocker.cmd "C:\path\DnsBlocker-1.0.23.msi"
   pause
   exit /b 1
 )

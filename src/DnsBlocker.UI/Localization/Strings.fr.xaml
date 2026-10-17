@@ -12,6 +12,7 @@
   <sys:String x:Key="Btn.StartService">Démarrer le service</sys:String>
   <sys:String x:Key="Btn.RetryConnection">Réessayer la connexion</sys:String>
   <sys:String x:Key="Btn.VerifyPolicies">Vérifier les politiques QRP</sys:String>
+  <sys:String x:Key="Btn.TestBlock">Tester le blocage</sys:String>
   <sys:String x:Key="Btn.SaveConfig">Enregistrer la configuration</sys:String>
   <sys:String x:Key="Btn.PrepareTarget">Préparer une cible (WinRM)…</sys:String>
   <sys:String x:Key="Btn.AddLocalDns">Ajouter ce serveur (DNS local)</sys:String>
@@ -38,7 +39,7 @@
   <sys:String x:Key="Tab.Stats">Stats</sys:String>
   <sys:String x:Key="Status.Connecting">Connexion au service…</sys:String>
   <sys:String x:Key="Status.LastSyncTitle">Dernière sync (poussée hub → DNS)</sys:String>
-  <sys:String x:Key="Status.SucceededHint">Le statut « Succeeded » indique que le hub a poussé des chunks — pas que les politiques sont encore présentes/activées sur le serveur.</sys:String>
+  <sys:String x:Key="Status.SucceededHint">Après chaque sync le hub vérifie automatiquement les comptes QRP Enabled (table ci-dessous). « Succeeded » seul ne suffit pas — utilisez Tester le blocage pour beeg.com.</sys:String>
   <sys:String x:Key="Status.Col.Server">Serveur</sys:String>
   <sys:String x:Key="Status.Col.Kind">Type</sys:String>
   <sys:String x:Key="Status.Kind.Local">Local (sans WinRM)</sys:String>
@@ -48,7 +49,9 @@
   <sys:String x:Key="Status.Col.Duration">Durée</sys:String>
   <sys:String x:Key="Status.Col.Error">Erreur</sys:String>
   <sys:String x:Key="Status.LivePoliciesTitle">Politiques QRP installées (sonde live Get-DnsServerQueryResolutionPolicy)</sys:String>
-  <sys:String x:Key="Status.NoProbeYet">Aucune sonde encore — cliquez « Vérifier les politiques QRP ».</sys:String>
+  <sys:String x:Key="Status.NoProbeYet">Aucune sonde encore — lancée automatiquement après sync, ou cliquez « Vérifier les politiques QRP ».</sys:String>
+  <sys:String x:Key="Status.BlockTestTitle">Tester le blocage (nslookup vers la cible DNS)</sys:String>
+  <sys:String x:Key="Status.BlockTestHint">Saisissez un domaine de la blocklist (ex. beeg.com). Attendez REFUSED / timeout / NXDOMAIN — pas des IP Cloudflare. Le DNS client doit être uniquement ce serveur (pas de DoH).</sys:String>
   <sys:String x:Key="Status.Col.Applied">Application</sys:String>
   <sys:String x:Key="Status.Col.Installed">Installées</sys:String>
   <sys:String x:Key="Status.Col.Enabled">Activées</sys:String>
