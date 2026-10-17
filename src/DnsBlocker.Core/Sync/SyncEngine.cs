@@ -148,6 +148,57 @@ public sealed class SyncEngine
                 });
             }
 
+            var byTarget = result.Targets.ToDictionary(
+                t => t.Target, StringComparer.OrdinalIgnoreCase);
+            var priorByTarget = (_state.LoadLastSync()?.Targets ?? [])
+                .ToDictionary(t => t.Target, StringComparer.OrdinalIgnoreCase);
+
+            Report(progress, SyncProgressUpdate.Classify(targets.Count));
+            var classified = new List<SyncTargetClassification>(targets.Count);
+            foreach (var t in targets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                priorByTarget.TryGetValue(t, out var prior);
+                var lastOk = prior is { Status: TargetSyncStatus.Succeeded }
+                    ? prior.FinishedAt
+                    : null;
+                try
+                {
+                    var live = await _provider.ListPoliciesAsync(
+                            t, config.PolicyNamePrefix, cancellationToken)
+                        .ConfigureAwait(false);
+                    classified.Add(new SyncTargetClassification(
+                        t, live.Count, ProbeOk: true, lastOk));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex, "Pre-apply inventory failed for {Target} — prioritizing as empty", t);
+                    classified.Add(new SyncTargetClassification(
+                        t, LivePolicyCount: 0, ProbeOk: false, lastOk));
+                }
+            }
+
+            var plan = SyncTargetPlanner.BuildPlan(classified, config.MaxPopulatedTargetsPerSync);
+            var summary = SyncTargetPlanner.Summarize(plan);
+            Report(progress, SyncProgressUpdate.Prioritize(summary, plan));
+            _logger.LogInformation("{Summary}", summary);
+
+            foreach (var entry in plan.Where(p => !p.ApplyThisRun))
+            {
+                var targetResult = byTarget[entry.Target];
+                priorByTarget.TryGetValue(entry.Target, out var prior);
+                targetResult.Status = TargetSyncStatus.Skipped;
+                targetResult.Error = entry.ReasonEn;
+                targetResult.PolicyCount = prior?.PolicyCount ?? entry.LivePolicyCount;
+                targetResult.FinishedAt = prior?.FinishedAt;
+                targetResult.Duration = prior?.Duration;
+                Report(progress, SyncProgressUpdate.DeferTarget(
+                    entry.Target, entry.LivePolicyCount, entry.ReasonEn));
+                _logger.LogInformation(
+                    "Deferring {Target}: {Reason}", entry.Target, entry.ReasonEn);
+            }
+
             // Default 1 — parallel apply doubles PowerShell + manifest RSS on the DC.
             // When RestartDnsAfterPolicySync is on, force serial apply: concurrent local DNS restart
             // mid-VERIFY produced empty `VERIFY installed=` / false probe zeros on windc04 (1.0.28).
@@ -163,56 +214,25 @@ public sealed class SyncEngine
             using var gate = new SemaphoreSlim(parallel);
             var throttleMs = Math.Max(0, config.PolicyApplyThrottleMs);
             var gcEvery = Math.Max(0, config.PolicyApplyGcEvery);
-            var tasks = result.Targets.Select(async targetResult =>
-            {
-                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                targetResult.Status = TargetSyncStatus.InProgress;
-                try
-                {
-                    Report(progress, SyncProgressUpdate.ApplyTarget(targetResult.Target, expectedPolicies));
-                    _logger.LogInformation(
-                        "Applying QRP to {Target} (RSS {Rss})",
-                        targetResult.Target, ProcessMemory.FormatWorkingSet());
 
-                    await _provider.ApplyPoliciesAsync(
-                        targetResult.Target,
-                        config.PolicyNamePrefix,
-                        config.PolicyAction,
-                        chunks,
-                        cancellationToken,
-                        config.RestartDnsAfterPolicySync,
-                        throttleMs,
-                        gcEvery,
-                        bridge).ConfigureAwait(false);
+            // Empty/unknown first (full batch), then selected populated — never interleave so cold
+            // servers get coverage before incremental refreshes compete for the apply gate.
+            var emptyBatch = plan
+                .Where(p => p.ApplyThisRun
+                            && p.Kind is SyncTargetPriorityKind.Empty or SyncTargetPriorityKind.Unknown)
+                .ToList();
+            var populatedBatch = plan
+                .Where(p => p.ApplyThisRun && p.Kind == SyncTargetPriorityKind.Populated)
+                .ToList();
 
-                    targetResult.Status = TargetSyncStatus.Succeeded;
-                    targetResult.PolicyCount = expectedPolicies;
-                    targetResult.Error = null;
-                    Report(progress, SyncProgressUpdate.ApplyDone(targetResult.Target, expectedPolicies, ok: true));
-                    _logger.LogInformation(
-                        "Sync succeeded for {Target} ({Policies} policies, RSS {Rss})",
-                        targetResult.Target, expectedPolicies, ProcessMemory.FormatWorkingSet());
-                }
-                catch (Exception ex)
-                {
-                    targetResult.Status = TargetSyncStatus.Failed;
-                    targetResult.Error = ex.Message;
-                    Report(progress, SyncProgressUpdate.ApplyDone(
-                        targetResult.Target, expectedPolicies, ok: false, error: ex.Message));
-                    _logger.LogError(ex, "Sync failed for {Target}", targetResult.Target);
-                }
-                finally
-                {
-                    sw.Stop();
-                    targetResult.Duration = sw.Elapsed;
-                    targetResult.FinishedAt = DateTimeOffset.UtcNow;
-                    ProcessMemory.TrimAfterLargeDrop(blocking: true);
-                    gate.Release();
-                }
-            });
-
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            await ApplyBatchAsync(
+                    emptyBatch, byTarget, chunks, expectedPolicies, config, gate,
+                    throttleMs, gcEvery, bridge, progress, cancellationToken)
+                .ConfigureAwait(false);
+            await ApplyBatchAsync(
+                    populatedBatch, byTarget, chunks, expectedPolicies, config, gate,
+                    throttleMs, gcEvery, bridge, progress, cancellationToken)
+                .ConfigureAwait(false);
 
             // Drop chunk lists so domain strings are eligible for GC (manifest already on disk during apply).
             if (chunks is List<IReadOnlyList<string>> mutable)
@@ -241,6 +261,76 @@ public sealed class SyncEngine
                 _currentProgress = null;
             _syncLock.Release();
         }
+    }
+
+    private async Task ApplyBatchAsync(
+        IReadOnlyList<SyncTargetPlanEntry> batch,
+        IReadOnlyDictionary<string, TargetSyncResult> byTarget,
+        IReadOnlyList<IReadOnlyList<string>> chunks,
+        int expectedPolicies,
+        AppConfig config,
+        SemaphoreSlim gate,
+        int throttleMs,
+        int gcEvery,
+        IProgress<SyncProgressUpdate> bridge,
+        IProgress<SyncProgressUpdate>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (batch.Count == 0)
+            return;
+
+        var tasks = batch.Select(async entry =>
+        {
+            var targetResult = byTarget[entry.Target];
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            targetResult.Status = TargetSyncStatus.InProgress;
+            try
+            {
+                Report(progress, SyncProgressUpdate.ApplyTarget(
+                    targetResult.Target, expectedPolicies, entry.ReasonEn));
+                _logger.LogInformation(
+                    "Applying QRP to {Target} ({Reason}, RSS {Rss})",
+                    targetResult.Target, entry.ReasonEn, ProcessMemory.FormatWorkingSet());
+
+                await _provider.ApplyPoliciesAsync(
+                    targetResult.Target,
+                    config.PolicyNamePrefix,
+                    config.PolicyAction,
+                    chunks,
+                    cancellationToken,
+                    config.RestartDnsAfterPolicySync,
+                    throttleMs,
+                    gcEvery,
+                    bridge).ConfigureAwait(false);
+
+                targetResult.Status = TargetSyncStatus.Succeeded;
+                targetResult.PolicyCount = expectedPolicies;
+                targetResult.Error = null;
+                Report(progress, SyncProgressUpdate.ApplyDone(targetResult.Target, expectedPolicies, ok: true));
+                _logger.LogInformation(
+                    "Sync succeeded for {Target} ({Policies} policies, RSS {Rss})",
+                    targetResult.Target, expectedPolicies, ProcessMemory.FormatWorkingSet());
+            }
+            catch (Exception ex)
+            {
+                targetResult.Status = TargetSyncStatus.Failed;
+                targetResult.Error = ex.Message;
+                Report(progress, SyncProgressUpdate.ApplyDone(
+                    targetResult.Target, expectedPolicies, ok: false, error: ex.Message));
+                _logger.LogError(ex, "Sync failed for {Target}", targetResult.Target);
+            }
+            finally
+            {
+                sw.Stop();
+                targetResult.Duration = sw.Elapsed;
+                targetResult.FinishedAt = DateTimeOffset.UtcNow;
+                ProcessMemory.TrimAfterLargeDrop(blocking: true);
+                gate.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     private void Report(IProgress<SyncProgressUpdate>? progress, SyncProgressUpdate update)

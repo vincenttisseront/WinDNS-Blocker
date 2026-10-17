@@ -548,7 +548,10 @@ public partial class MainWindow : Window
     private async Task PresentSyncResultAsync(SyncRunResult result, bool fromWizard, bool showDialog)
     {
         var summary = result.Success
-            ? Loc.F("Main.Sync.Ok", result.DomainCount, result.Targets.Count)
+            ? result.DeferredCount > 0
+                ? Loc.F("Main.Sync.OkIncremental",
+                    result.DomainCount, result.AppliedCount, result.DeferredCount)
+                : Loc.F("Main.Sync.Ok", result.DomainCount, result.Targets.Count)
             : result.PartialSuccess
                 ? Loc.F("Main.Sync.Partial",
                     result.Targets.Count(t => t.Status == TargetSyncStatus.Succeeded),
@@ -568,9 +571,12 @@ public partial class MainWindow : Window
 
         foreach (var t in result.Targets)
         {
-            _journal.Write(t.Status == TargetSyncStatus.Succeeded
-                ? Loc.F("Main.Sync.TargetOk", t.Target, t.PolicyCount)
-                : Loc.F("Main.Sync.TargetFail", t.Target, t.Error));
+            _journal.Write(t.Status switch
+            {
+                TargetSyncStatus.Succeeded => Loc.F("Main.Sync.TargetOk", t.Target, t.PolicyCount),
+                TargetSyncStatus.Skipped => Loc.F("Main.Sync.TargetDeferred", t.Target, t.Error ?? ""),
+                _ => Loc.F("Main.Sync.TargetFail", t.Target, t.Error)
+            });
         }
 
         if (string.IsNullOrWhiteSpace(BlockTestDomainBox.Text))

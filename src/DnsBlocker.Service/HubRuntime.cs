@@ -118,9 +118,12 @@ public sealed class HubRuntime
                 .ConfigureAwait(false);
             foreach (var t in result.Targets)
             {
-                _logs.Write(t.Status == TargetSyncStatus.Succeeded
-                    ? $"Target OK: {t.Target} ({t.PolicyCount} policies)"
-                    : $"Target FAIL: {t.Target} — {t.Error}");
+                _logs.Write(t.Status switch
+                {
+                    TargetSyncStatus.Succeeded => $"Target OK: {t.Target} ({t.PolicyCount} policies)",
+                    TargetSyncStatus.Skipped => $"Target DEFERRED: {t.Target} — {t.Error}",
+                    _ => $"Target FAIL: {t.Target} — {t.Error}"
+                });
             }
 
             // Succeeded ≠ live Enabled policies — always probe Get-DnsServerQueryResolutionPolicy after sync.
@@ -828,6 +831,9 @@ public sealed class HubRuntime
         config.ChunkSize = Math.Clamp(config.ChunkSize, 1, 200);
         // Cap at 2 — never fan out farm-wide in parallel on a DC hub.
         config.MaxParallelTargets = Math.Clamp(config.MaxParallelTargets, 1, 2);
+        // 0 = unlimited populated fan-out; otherwise cap so multi-DC farms stay responsive.
+        if (config.MaxPopulatedTargetsPerSync < 0)
+            config.MaxPopulatedTargetsPerSync = 0;
         config.ScheduledHour = Math.Clamp(config.ScheduledHour, 0, 23);
         config.ScheduledMinute = Math.Clamp(config.ScheduledMinute, 0, 59);
         if (string.IsNullOrWhiteSpace(config.PolicyNamePrefix))
@@ -865,6 +871,7 @@ public sealed class HubRuntime
         PolicyApplyThrottleMs = c.PolicyApplyThrottleMs,
         PolicyApplyGcEvery = c.PolicyApplyGcEvery,
         MaxParallelTargets = c.MaxParallelTargets,
+        MaxPopulatedTargetsPerSync = c.MaxPopulatedTargetsPerSync,
         RestartDnsAfterPolicySync = c.RestartDnsAfterPolicySync,
         ScheduledHour = c.ScheduledHour,
         ScheduledMinute = c.ScheduledMinute,

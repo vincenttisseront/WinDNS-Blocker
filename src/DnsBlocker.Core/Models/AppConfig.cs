@@ -81,6 +81,13 @@ public sealed class AppConfig
     public int MaxParallelTargets { get; set; } = 1;
 
     /// <summary>
+    /// How many already-populated DNS targets to refresh per sync after empty ones.
+    /// Default 1 = au fil de l'eau (round-robin by oldest success). 0 = unlimited (legacy full fan-out).
+    /// Empty / probe-failed targets are always applied in the same run.
+    /// </summary>
+    public int MaxPopulatedTargetsPerSync { get; set; } = 1;
+
+    /// <summary>
     /// After replacing QRP policies, restart the Windows DNS Server service so criteria
     /// are loaded into the query path (remote/local Adds can otherwise leave policies
     /// present but inert until Restart-Service DNS).
