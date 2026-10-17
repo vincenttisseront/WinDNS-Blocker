@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.27: live sync progress in Status Action Log (download / merge / QRP apply milestones / verify / done); Busy « Syncing blocklist… » header stays in sync; FR/EN. Builds on 1.0.26 DC resource cap.",
+  "releaseNotes": "1.0.29: fix QRP VERIFY empty installed=/enabled= (PS hashtable unwrap) and post-sync probe false zero (INVENTORY counts); serialize applies when DNS restart is on. Builds on 1.0.28 in-app upgrade.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

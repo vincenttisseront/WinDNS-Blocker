@@ -149,7 +149,18 @@ public sealed class SyncEngine
             }
 
             // Default 1 — parallel apply doubles PowerShell + manifest RSS on the DC.
-            using var gate = new SemaphoreSlim(Math.Max(1, config.MaxParallelTargets));
+            // When RestartDnsAfterPolicySync is on, force serial apply: concurrent local DNS restart
+            // mid-VERIFY produced empty `VERIFY installed=` / false probe zeros on windc04 (1.0.28).
+            var parallel = Math.Max(1, config.MaxParallelTargets);
+            if (config.RestartDnsAfterPolicySync && parallel > 1)
+            {
+                _logger.LogWarning(
+                    "Capping MaxParallelTargets {Configured} → 1 because RestartDnsAfterPolicySync is enabled",
+                    parallel);
+                parallel = 1;
+            }
+
+            using var gate = new SemaphoreSlim(parallel);
             var throttleMs = Math.Max(0, config.PolicyApplyThrottleMs);
             var gcEvery = Math.Max(0, config.PolicyApplyGcEvery);
             var tasks = result.Targets.Select(async targetResult =>

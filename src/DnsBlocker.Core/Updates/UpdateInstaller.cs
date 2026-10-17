@@ -7,13 +7,13 @@ using System.Text.RegularExpressions;
 namespace DnsBlocker.Core.Updates;
 
 /// <summary>
-/// Downloads an MSI, verifies SHA-256, then launches msiexec.
+/// Downloads an MSI, verifies SHA-256, then launches msiexec after releasing file locks.
 /// <list type="bullet">
-/// <item><description><c>silent=true</c> → detached <c>msiexec /i … /qn /norestart</c> (service / LocalSystem; survives StopServices).</description></item>
-/// <item><description><c>silent=false</c> → <c>msiexec /i … /qb /norestart</c> with <c>Verb=runas</c> so the interactive UI triggers UAC.</description></item>
+/// <item><description><c>silent=true</c> → detached cmd: stop service + kill UI/Service, wait for exit, then <c>msiexec /qn</c>.</description></item>
+/// <item><description><c>silent=false</c> → elevated cmd (UAC): same prep, then <c>msiexec /qb</c>; caller should <c>Shutdown()</c> the UI.</description></item>
 /// </list>
-/// Never terminates the host process after starting msiexec — the UI/service stay alive and report errors via
-/// <see cref="UpdateInstallResult"/>. File I/O, HTTP, hashing, and process start are injectable for unit tests.
+/// Prep runs <b>before</b> msiexec so InstallFiles is not blocked by a live sync, DnsBlocker service, or WPF UI
+/// (Restart Manager is disabled in the MSI). Never Kill/Exit the host from this class — callers own shutdown.
 /// </summary>
 public sealed class UpdateInstaller
 {
@@ -143,9 +143,9 @@ public sealed class UpdateInstaller
                     $"SHA-256 mismatch (expected {expectedSha}, got {actualHash}).");
             }
 
-            // /norestart: never reboot (would kill UI). Fire-and-forget msiexec; do not Kill/Exit host.
-            // Silent (service) path: detach via cmd start /b so SCM StopServices does not kill msiexec
-            // mid-upgrade (broken install + UI looking "crashed").
+            // /norestart: never reboot. Fire-and-forget; do not Kill/Exit host from here.
+            // Both paths: stop service + kill related processes + wait for handles, THEN msiexec.
+            // Silent: detach via start /b so the service process tree dying cannot abort msiexec.
             var startInfo = BuildMsiexecStartInfo(msiPath, silent);
 
             int? exit;
@@ -204,41 +204,66 @@ public sealed class UpdateInstaller
     }
 
     /// <summary>
-    /// Silent installs: kill UI (unlock files), delay, then detached msiexec so StopServices
-    /// cannot abort the upgrade mid-flight. Interactive: msiexec + UAC (runas); caller should exit UI.
+    /// Builds the process that stops DnsBlocker (service + UI), waits for processes to exit,
+    /// then launches msiexec. Interactive uses UAC (<c>runas</c>); silent detaches msiexec via <c>start /b</c>.
     /// </summary>
     internal static ProcessStartInfo BuildMsiexecStartInfo(string msiPath, bool silent)
     {
         // /norestart: never reboot. Quiet UI flags only differ.
         var msiexecArgs = $"/i \"{msiPath}\" {(silent ? "/qn" : "/qb")} /norestart";
+        var prep = BuildPreUpgradeCmd(msiPath, msiexecArgs, detachMsiexec: silent);
 
         if (silent)
         {
-            // taskkill unlocks DnsBlocker.UI.exe; ping delay lets handles release before InstallFiles.
-            // start /b detaches msiexec from the service process tree.
-            var cmd =
-                "taskkill /IM DnsBlocker.UI.exe /F >nul 2>&1 & " +
-                "ping -n 4 127.0.0.1 >nul & " +
-                "start \"DnsBlockerMsi\" /b msiexec.exe " + msiexecArgs;
             return new ProcessStartInfo
             {
                 FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                Arguments = "/c " + cmd,
+                Arguments = "/c " + prep,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
             };
         }
 
+        // Elevated helper: stop service requires admin; same UAC prompt as msiexec alone.
         return new ProcessStartInfo
         {
-            FileName = "msiexec.exe",
-            Arguments = msiexecArgs,
+            FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            Arguments = "/c " + prep,
             UseShellExecute = true,
             Verb = "runas",
             CreateNoWindow = false,
             WindowStyle = ProcessWindowStyle.Normal
         };
+    }
+
+    /// <summary>
+    /// Cmd script: brief grace for UI Shutdown → request service stop → force-kill leftovers →
+    /// settle (handles/pipe) → msiexec (detached when <paramref name="detachMsiexec"/>).
+    /// Matches <c>Recover-DnsBlocker.cmd</c> stop order; <c>sc stop</c> alone is not enough when sync
+    /// holds PowerShell children, so <c>taskkill /F</c> always follows a short wait.
+    /// </summary>
+    internal static string BuildPreUpgradeCmd(string msiPath, string msiexecArgs, bool detachMsiexec)
+    {
+        _ = msiPath; // path already embedded in msiexecArgs
+        // & chaining keeps one /c line (no nested batches / paren quoting issues).
+        var msiexecLaunch = detachMsiexec
+            ? "start \"DnsBlockerMsi\" /b msiexec.exe " + msiexecArgs
+            : "msiexec.exe " + msiexecArgs;
+
+        return
+            // 1) Grace so interactive UI can begin Application.Shutdown() before force-kill.
+            "ping -n 3 127.0.0.1 >nul & " +
+            // 2) Ask SCM to stop (releases named pipe + cancels in-flight work when OnStop runs).
+            "sc stop DnsBlocker >nul 2>&1 & " +
+            "ping -n 4 127.0.0.1 >nul & " +
+            // 3) Force-kill anything still holding Program Files\DnsBlocker locks.
+            "taskkill /IM DnsBlocker.UI.exe /F >nul 2>&1 & " +
+            "taskkill /IM DnsBlocker.Service.exe /F >nul 2>&1 & " +
+            // 4) Extra settle so InstallFiles does not race dying process handles.
+            "ping -n 5 127.0.0.1 >nul & " +
+            // 5) Install
+            msiexecLaunch;
     }
 
     private async Task<string> ComputeSha256HexAsync(string path, CancellationToken cancellationToken)
