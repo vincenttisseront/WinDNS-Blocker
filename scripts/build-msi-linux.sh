@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Status tab green empty block + Verify/Test CTAs (PR #21). File.Version stamp + CA 242 + late REP retained.",
+  "releaseNotes": "QRP block for real (1.0.24): sentinel EQ,beeg.com,*.beeg.com; canary+smoke fail sync on public IPs; Enabled=0 fails; auto Verify/Test after sync.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

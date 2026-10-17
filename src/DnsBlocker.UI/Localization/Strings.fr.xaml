@@ -39,7 +39,7 @@
   <sys:String x:Key="Tab.Stats">Stats</sys:String>
   <sys:String x:Key="Status.Connecting">Connexion au service…</sys:String>
   <sys:String x:Key="Status.LastSyncTitle">Dernière sync (poussée hub → DNS)</sys:String>
-  <sys:String x:Key="Status.SucceededHint">Après chaque sync le hub vérifie automatiquement les comptes QRP Enabled (table ci-dessous). « Succeeded » seul ne suffit pas — utilisez Tester le blocage pour beeg.com.</sys:String>
+  <sys:String x:Key="Status.SucceededHint">Après chaque sync le hub vérifie les comptes QRP Enabled + Resolve-DnsName beeg.com. La sync ÉCHOUE si Enabled=0 ou si des IP publiques reviennent. « Succeeded » = blocage prouvé.</sys:String>
   <sys:String x:Key="Status.Col.Server">Serveur</sys:String>
   <sys:String x:Key="Status.Col.Kind">Type</sys:String>
   <sys:String x:Key="Status.Kind.Local">Local (sans WinRM)</sys:String>

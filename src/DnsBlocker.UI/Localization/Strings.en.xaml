@@ -39,7 +39,7 @@
   <sys:String x:Key="Tab.Stats">Stats</sys:String>
   <sys:String x:Key="Status.Connecting">Connecting to service…</sys:String>
   <sys:String x:Key="Status.LastSyncTitle">Last sync (hub → DNS push)</sys:String>
-  <sys:String x:Key="Status.SucceededHint">After each sync the hub auto-verifies Enabled QRP counts (table below). « Succeeded » alone is not enough — use Test blocking for beeg.com.</sys:String>
+  <sys:String x:Key="Status.SucceededHint">After each sync the hub auto-verifies Enabled QRP counts + Resolve-DnsName beeg.com. Sync FAILS if Enabled=0 or public IPs still return. « Succeeded » means blocking was proven.</sys:String>
   <sys:String x:Key="Status.Col.Server">Server</sys:String>
   <sys:String x:Key="Status.Col.Kind">Kind</sys:String>
   <sys:String x:Key="Status.Kind.Local">Local (no WinRM)</sys:String>

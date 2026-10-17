@@ -25,6 +25,9 @@ public static class AppPaths
     public static string SecretsDirectory => Path.Combine(DataDirectory, "secrets");
     public static string PreparedTargetsPath => Path.Combine(DataDirectory, "prepared-targets.json");
 
+    /// <summary>Last Get-DnsServerQueryResolutionPolicy probe (survives service restart).</summary>
+    public static string LastPolicyProbePath => Path.Combine(DataDirectory, "last-policy-probe.json");
+
     /// <summary>
     /// Written when the first-run wizard finishes. Shared contract with install/repair tooling.
     /// </summary>

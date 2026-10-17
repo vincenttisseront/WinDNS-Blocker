@@ -1,8 +1,10 @@
+using System.Text.Json;
 using DnsBlocker.Core.Config;
 using DnsBlocker.Core.Dns;
 using DnsBlocker.Core.Logging;
 using DnsBlocker.Core.Models;
 using DnsBlocker.Core.Net;
+using DnsBlocker.Core.Paths;
 using DnsBlocker.Core.Security;
 using DnsBlocker.Core.Setup;
 using DnsBlocker.Core.Stats;
@@ -60,6 +62,7 @@ public sealed class HubRuntime
         _credentials = credentials;
         _preparedTargets = preparedTargets;
         _config = _configStore.Load();
+        _lastPolicyProbe = TryLoadPersistedProbe();
         // First-run / scaffold localhost: if this box has DNS Server running, default to local FQDN.
         if (LocalDnsTarget.TryEnsureDefaultTargets(_config))
         {
@@ -112,24 +115,67 @@ public sealed class HubRuntime
         }
 
         // Succeeded ≠ live Enabled policies — always probe Get-DnsServerQueryResolutionPolicy after sync.
+        // If Enabled=0 or Resolve-DnsName still returns public IPs, flip the target to Failed.
         try
         {
             var probe = await GetTargetPolicyStatusAsync(cancellationToken).ConfigureAwait(false);
+            var mutated = false;
             foreach (var row in probe.Targets)
             {
                 _logs.Write(row.ProbeOk
                     ? $"QRP probe after sync: {row.Target} — installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, sync={row.LastSyncPolicyCount} → {row.AppliedLabel}"
                     : $"QRP probe after sync FAIL: {row.Target} — {row.ProbeError}");
 
-                if (row.ProbeOk
-                    && row.LastSyncStatus == TargetSyncStatus.Succeeded
-                    && !row.AppliedOk)
+                var targetResult = result.Targets.FirstOrDefault(t =>
+                    string.Equals(t.Target, row.Target, StringComparison.OrdinalIgnoreCase));
+                if (targetResult is null || targetResult.Status != TargetSyncStatus.Succeeded)
+                    continue;
+
+                if (!row.ProbeOk || row.LiveEnabledCount == 0 || !row.AppliedOk)
                 {
-                    _logs.Write(
-                        $"WARNING: sync Succeeded for {row.Target} but live Enabled count does not match " +
-                        $"(enabled={row.LiveEnabledCount}, installed={row.LivePolicyCount}, sync={row.LastSyncPolicyCount}). " +
-                        "Blocking will not work until policies are present and Enabled.");
+                    targetResult.Status = TargetSyncStatus.Failed;
+                    targetResult.Error =
+                        $"Post-sync QRP probe: installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, " +
+                        $"sync={row.LastSyncPolicyCount} ({row.AppliedLabel}). " +
+                        "Enabled count must be > 0 and match sync — blocking is not effective.";
+                    mutated = true;
+                    _logs.Write($"Target FAIL after probe: {row.Target} — {targetResult.Error}");
+                    continue;
                 }
+
+                // Auto Test blocking (beeg.com) — same check Vincent runs in CMD.
+                try
+                {
+                    var sample = PreferPostSyncBlockSample(row.Target);
+                    var inList = _state.SearchDomains(sample, 20)
+                        .Any(d => d.Equals(sample, StringComparison.OrdinalIgnoreCase)
+                                  || d.Equals("*." + sample, StringComparison.OrdinalIgnoreCase));
+                    var block = await _stats.TestBlockAsync(row.Target, sample, inList, cancellationToken)
+                        .ConfigureAwait(false);
+                    _logs.Write(
+                        $"Auto block test after sync: {sample} → {row.Target}: blocked={block.AppearsBlocked} " +
+                        $"({block.ResolutionSummary ?? block.Error ?? "n/a"})");
+
+                    if (inList && block.ProbeOk && !block.AppearsBlocked)
+                    {
+                        targetResult.Status = TargetSyncStatus.Failed;
+                        targetResult.Error =
+                            $"Post-sync Resolve-DnsName {sample} still returns public IPs via {row.Target}: " +
+                            $"{block.ResolutionSummary}. Sync must not report Succeeded when blocking fails.";
+                        mutated = true;
+                        _logs.Write($"Target FAIL after block test: {row.Target} — {targetResult.Error}");
+                    }
+                }
+                catch (Exception blockEx)
+                {
+                    _logs.Write($"Auto block test after sync error ({row.Target}): {blockEx.Message}");
+                }
+            }
+
+            if (mutated)
+            {
+                result.FinishedAt = DateTimeOffset.UtcNow;
+                _state.SaveSyncResult(result);
             }
         }
         catch (Exception ex)
@@ -139,6 +185,8 @@ public sealed class HubRuntime
 
         return result;
     }
+
+    private static string PreferPostSyncBlockSample(string _) => "beeg.com";
 
     public ServiceStatus GetStatus(DateTimeOffset? nextScheduledUtc)
     {
@@ -235,8 +283,40 @@ public sealed class HubRuntime
 
         lock (_probeGate)
             _lastPolicyProbe = result;
+        TryPersistProbe(result);
 
         return result;
+    }
+
+    private static TargetPolicyStatusResult? TryLoadPersistedProbe()
+    {
+        try
+        {
+            var path = AppPaths.LastPolicyProbePath;
+            if (!File.Exists(path))
+                return null;
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<TargetPolicyStatusResult>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void TryPersistProbe(TargetPolicyStatusResult result)
+    {
+        try
+        {
+            AppPaths.EnsureDirectories();
+            var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(AppPaths.LastPolicyProbePath, json);
+        }
+        catch (Exception ex)
+        {
+            _logs.Write($"Could not persist QRP probe: {ex.Message}");
+        }
     }
 
     public IReadOnlyList<string> SearchDomains(string? query, int limit) =>

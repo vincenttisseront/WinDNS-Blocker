@@ -865,6 +865,7 @@ public partial class MainWindow : Window
             // Empty DataGrid inside a ScrollViewer otherwise expands to a viewport-tall void.
             PolicyStatusGrid.Height = 40;
             PolicyProbeSummary.Text = probe?.Message ?? Loc.T("Status.NoProbeYet");
+            PolicyProbeSummary.Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush");
             return;
         }
 
@@ -884,10 +885,15 @@ public partial class MainWindow : Window
         }).ToList();
         var ok = probe.Targets.Count(t => t.AppliedOk);
         var fail = probe.Targets.Count(t => !t.ProbeOk);
+        var zeroEnabled = probe.Targets.Count(t => t.ProbeOk && t.LiveEnabledCount == 0);
         var failSuffix = fail > 0 ? Loc.F("Main.Probe.FailSuffix", fail) : "";
+        var zeroSuffix = zeroEnabled > 0 ? Loc.F("Main.Probe.ZeroEnabledSuffix", zeroEnabled) : "";
         var msgSuffix = string.IsNullOrWhiteSpace(probe.Message) ? "" : " — " + probe.Message;
         PolicyProbeSummary.Text = Loc.F("Main.Probe.Summary",
-            probe.CheckedAt, ok, probe.Targets.Count, failSuffix, msgSuffix);
+            probe.CheckedAt, ok, probe.Targets.Count, failSuffix + zeroSuffix, msgSuffix);
+        PolicyProbeSummary.Foreground = zeroEnabled > 0 || fail > 0
+            ? System.Windows.Media.Brushes.DarkRed
+            : (System.Windows.Media.Brush)FindResource("MutedBrush");
     }
 
     private void RenderActionLogs(IEnumerable<string>? serviceLogs = null)

@@ -48,6 +48,16 @@ OISD uses the **domainswild** endpoints (`*.apex`) so Windows DNS QRP `EQ,*.doma
 - WinRM reachability + DNS admin rights on each target
 - If DNS policies already replicate via AD, you may list a single target; otherwise list every DNS you want updated
 
+### Prove QRP actually blocks (manual)
+
+On the DNS server (elevated), run `scripts/Prove-QrpBlock.ps1`. The Microsoft-supported shape is:
+
+```powershell
+Add-DnsServerQueryResolutionPolicy -Name DnsBlocker_Test -Action IGNORE -Fqdn 'EQ,beeg.com,*.beeg.com' -ProcessingOrder 1 -PassThru
+```
+
+Server-level QueryProcessing (no `-ZoneName`, no `-ApplyOnRecursion`). After DNS restart, `Resolve-DnsName beeg.com -Server <dc>` must not return public A/AAAA. Hub sync creates a sentinel `DnsBlocker_00001` with that FQDN and **fails** the target if smoke/canary proof does not pass.
+
 ### Idempotent QRP sync (WIN32 9971)
 
 **Update now** replaces all `DnsBlocker_*` policies in **one** PowerShell session (remove-all, then recreate chunks). If a stale policy remains (**WIN32 9971** / “already exists”), the push removes that name and retries Add — partial prior syncs no longer fail the farm.
@@ -172,7 +182,7 @@ msiexec /x {868B963E-5A3E-508F-9667-3C1EA232098D} /qn
 msiexec /x {60726742-C306-5F22-B988-CC3CB3A4AC43} /qn
 del /f /q "%ProgramData%\Microsoft\Windows\Start Menu\Programs\WinDNS Blocker\*.*"
 rd /s /q "%ProgramFiles%\DnsBlocker"
-msiexec /i "%USERPROFILE%\Downloads\DnsBlocker-1.0.23.msi" /qb
+msiexec /i "%USERPROFILE%\Downloads\DnsBlocker-1.0.24.msi" /qb
 ```
 
 ProductCodes: 1.0.20=`{868B963E-…098D}`, 1.0.21=`{60726742-…AC43}`, 1.0.22=`{6AEED747-…5C2C}` (1.0.23 stamped at release).

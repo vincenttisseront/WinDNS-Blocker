@@ -95,6 +95,49 @@ public class PowerShellDnsPolicyProviderTests
     }
 
     [Fact]
+    public void BuildSentinelFqdn_PinsApexAndWildcard_MicrosoftShape()
+    {
+        var fqdn = PowerShellDnsPolicyProvider.BuildSentinelFqdn([
+            ["ads.example.com", "beeg.com", "*.beeg.com"]
+        ]);
+        Assert.Equal("EQ,beeg.com,*.beeg.com", fqdn);
+        Assert.Equal(2, PowerShellDnsPolicyProvider.CountExpectedPolicies([
+            ["ads.example.com", "beeg.com"]
+        ]));
+    }
+
+    [Fact]
+    public void BuildApplyScript_IncludesCanaryAndRejectsLoopbackOnlySmoke()
+    {
+        var script = PowerShellDnsPolicyProvider.BuildApplyScript(
+            "windc04.ar-systems.fr",
+            "DnsBlocker_",
+            "IGNORE",
+            [["beeg.com", "*.beeg.com"]],
+            restartDnsAfterApply: true);
+
+        Assert.Contains("CANARY_OK", script, StringComparison.Ordinal);
+        Assert.Contains("www.microsoft.com", script, StringComparison.Ordinal);
+        Assert.Contains("serverCandidates", script, StringComparison.Ordinal);
+        Assert.Contains("unexpected resolve error", script, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Enabled QRP count is 0", script, StringComparison.Ordinal);
+        var manifest = ReadManifestFromScriptComment(script);
+        Assert.Contains("EQ,beeg.com,*.beeg.com", manifest, StringComparison.Ordinal);
+        Assert.Contains("\"expected\":2", manifest, StringComparison.Ordinal); // sentinel + 1 chunk
+    }
+
+    [Fact]
+    public void ValidateApplyOutput_ThrowsOnSmokeSkipWithPolicies()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PowerShellDnsPolicyProvider.ValidateApplyOutput(
+                "VERIFY installed=1 enabled=1 expected=1 smoke=SKIP\n",
+                "windc04",
+                1));
+        Assert.Contains("SKIP", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void NormalizeChunks_RespectsFqdnBudget()
     {
         // 100 domains of 40 chars would exceed 8192 if packed naively at 1000/chunk

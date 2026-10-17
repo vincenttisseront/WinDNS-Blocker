@@ -50,12 +50,13 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
 
         try
         {
+            var expectedPolicies = CountExpectedPolicies(normalized);
             WriteManifest(manifestPath, computerName, policyNamePrefix, normalizedAction, normalized, restartDnsAfterApply);
             var script = BuildApplyScriptFromManifest(manifestPath);
             try
             {
                 var output = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
-                ValidateApplyOutput(output, computerName, normalized.Count);
+                ValidateApplyOutput(output, computerName, expectedPolicies);
                 _logger.LogInformation(
                     "Applied and verified {Count} QRP policies on {Target} (prefix {Prefix}, action {Action}, restartDns={Restart})",
                     normalized.Count, computerName, policyNamePrefix, normalizedAction, restartDnsAfterApply);
@@ -314,6 +315,13 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         if (verifyLine.Contains("smoke=FAIL", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
                 $"QRP smoke test failed on '{computerName}': sample domain still resolves after policy apply. {verifyLine}");
+
+        if (expectedPolicies > 0
+            && verifyLine.Contains("smoke=SKIP", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"QRP smoke was SKIP on '{computerName}' with {expectedPolicies} policies — refusing Succeeded without Resolve-DnsName proof. {verifyLine}");
+        }
     }
 
     private static int ReadVerifyInt(string line, string key)
@@ -330,6 +338,22 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         return t.Length <= 800 ? t : t[..800] + "…";
     }
 
+    /// <summary>
+    /// Tiny ProcessingOrder=1 policy: <c>EQ,apex,*.apex</c> (Microsoft blackhole shape).
+    /// Guarantees the smoke domain is not buried in a multi-thousand-domain criterion.
+    /// </summary>
+    public static string? BuildSentinelFqdn(IReadOnlyList<IReadOnlyList<string>> chunks)
+    {
+        var smoke = PreferSmokeDomain(chunks);
+        if (string.IsNullOrWhiteSpace(smoke))
+            return null;
+        // MS-DNSP: EQ,*.apex matches apex + children; we still pin bare apex for builds that differ.
+        return $"EQ,{smoke},*.{smoke}";
+    }
+
+    public static int CountExpectedPolicies(IReadOnlyList<IReadOnlyList<string>> chunks) =>
+        chunks.Count + (BuildSentinelFqdn(chunks) is null ? 0 : 1);
+
     private static void WriteManifest(
         string path,
         string computerName,
@@ -341,16 +365,30 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         var isLocal = LocalDnsTarget.IsLocalTarget(computerName);
         // Prefer a domain that should resolve on the public Internet when unblocked (Vincent repro).
         string? smokeDomain = PreferSmokeDomain(chunks);
+        var sentinelFqdn = BuildSentinelFqdn(chunks);
 
-        var policies = new List<object>(chunks.Count);
+        var policies = new List<object>(chunks.Count + 1);
+        var order = 1;
+        if (sentinelFqdn is not null)
+        {
+            policies.Add(new
+            {
+                name = FormatPolicyName(policyNamePrefix, order),
+                fqdn = sentinelFqdn,
+                order
+            });
+            order++;
+        }
+
         for (var i = 0; i < chunks.Count; i++)
         {
             policies.Add(new
             {
-                name = FormatPolicyName(policyNamePrefix, i + 1),
+                name = FormatPolicyName(policyNamePrefix, order),
                 fqdn = "EQ," + string.Join(",", chunks[i]),
-                order = i + 1
+                order
             });
+            order++;
         }
 
         var manifest = new
@@ -361,7 +399,7 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             action,
             restartDns = restartDnsAfterApply,
             smokeDomain,
-            expected = chunks.Count,
+            expected = policies.Count,
             policies
         };
 
@@ -418,23 +456,27 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             }
 
             function Test-DnsBlockerHasFqdnCriteria($policy) {
+              # Require non-empty EQ,... content. CriteriaType=Fqdn alone is NOT enough
+              # (Add -PassThru can echo type with empty/inert criterion → no block).
               if ($null -eq $policy) { return $false }
-              if ($policy.PSObject.Properties['Fqdn'] -and $policy.Fqdn -and ([string]$policy.Fqdn).Length -gt 3) {
-                return $true
+              if ($policy.PSObject.Properties['Fqdn'] -and $policy.Fqdn) {
+                $f = [string]$policy.Fqdn
+                if ($f -match '(?i)^EQ,.+' -and $f.Length -gt 4) { return $true }
               }
-              if ($null -eq $policy.Criteria) { return $false }
-              foreach ($c in @($policy.Criteria)) {
-                $t = ''
-                if ($c.PSObject.Properties['CriteriaType']) { $t = [string]$c.CriteriaType }
-                elseif ($c.PSObject.Properties['Type']) { $t = [string]$c.Type }
+              $criteria = New-Object System.Collections.Generic.List[object]
+              if ($null -ne $policy.Criteria) {
+                foreach ($c in @($policy.Criteria)) { [void]$criteria.Add($c) }
+              }
+              if ($null -ne $policy.Content -and $policy.Content.PSObject.Properties['Criteria'] -and $policy.Content.Criteria) {
+                foreach ($c in @($policy.Content.Criteria)) { [void]$criteria.Add($c) }
+              }
+              foreach ($c in $criteria) {
                 $content = ''
-                if ($c.PSObject.Properties['Content']) { $content = [string]$c.Content }
-                elseif ($c.PSObject.Properties['Criterion']) { $content = [string]$c.Criterion }
-                if ($t -match 'Fqdn') { return $true }
-                if ($content -match '(?i)EQ,') { return $true }
+                if ($c.PSObject.Properties['Criterion'] -and $c.Criterion) { $content = [string]$c.Criterion }
+                elseif ($c.PSObject.Properties['Content'] -and $c.Content) { $content = [string]$c.Content }
+                elseif ($c.PSObject.Properties['Criteria'] -and $c.Criteria) { $content = [string]$c.Criteria }
+                if ($content -match '(?i)EQ,.+' -and $content.Length -gt 4) { return $true }
               }
-              $blob = ($policy | Format-List * | Out-String)
-              if ($blob -match '(?i)Fqdn' -and $blob -match '(?i)EQ,') { return $true }
               return $false
             }
 
@@ -627,30 +669,91 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             }
 
             $counts = Get-DnsBlockerLiveCounts -Computer $computer -Prefix $prefix -Local $local
+            if ($counts.installed -eq 0 -or $counts.enabled -eq 0) {
+              Write-Output ("VERIFY installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected smoke=FAIL")
+              Write-Error ("SMOKE_FAIL: Enabled QRP count is 0 after apply (installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected). Succeeded push without Enabled policies will not block.")
+              exit 1
+            }
+
             $smoke = 'SKIP'
             if ($smokeDomain -and $smokeDomain.Length -gt 0) {
-              $server = $(if ($local) { '127.0.0.1' } else { $computer })
+              # Prefer the real computer DNS name — many DC DNS roles answer on the NIC IP but NOT on 127.0.0.1.
+              # Using only loopback caused false smoke=OK (resolve error treated as "blocked") while clients
+              # querying the NIC still got Cloudflare A/AAAA.
+              $serverCandidates = New-Object System.Collections.Generic.List[string]
+              if ($computer -and $computer.Length -gt 0 -and $computer -ne '.' -and $computer -ne 'localhost') {
+                [void]$serverCandidates.Add($computer)
+              }
+              if ($local) { [void]$serverCandidates.Add('127.0.0.1') }
+              if ($serverCandidates.Count -eq 0) { [void]$serverCandidates.Add('127.0.0.1') }
+
+              $server = $null
+              $canary = 'www.microsoft.com'
+              $canaryOk = $false
+              foreach ($candidate in $serverCandidates) {
+                for ($t = 0; $t -lt 45; $t++) {
+                  try {
+                    $ca = @(Resolve-DnsName -Name $canary -Server $candidate -Type A -DnsOnly -ErrorAction Stop |
+                      Where-Object { $_.IPAddress } |
+                      ForEach-Object { $_.IPAddress.ToString() })
+                    if ($ca.Count -gt 0) {
+                      $server = $candidate
+                      $canaryOk = $true
+                      Write-Output ("CANARY_OK " + $canary + " via " + $server + " -> " + ($ca -join ','))
+                      break
+                    }
+                  } catch {
+                    # DNS may still be binding after Restart-Service
+                  }
+                  Start-Sleep -Seconds 1
+                }
+                if ($canaryOk) { break }
+              }
+
+              if (-not $canaryOk -or -not $server) {
+                Write-Output ("VERIFY installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected smoke=FAIL")
+                Write-Error ("SMOKE_FAIL: canary " + $canary + " did not resolve via " + ($serverCandidates -join '|') + " after QRP apply — DNS not ready or recursion broken; refusing to mark sync Succeeded.")
+                exit 1
+              }
+
               try {
                 $answers = @(Resolve-DnsName -Name $smokeDomain -Server $server -Type A -DnsOnly -ErrorAction Stop)
                 $addrs = @($answers | Where-Object { $_.IPAddress } | ForEach-Object { $_.IPAddress.ToString() })
                 if ($addrs.Count -gt 0) {
                   $smoke = 'FAIL'
-                  Write-Error ("SMOKE_FAIL: " + $smokeDomain + " still resolves to " + ($addrs -join ',') + " via " + $server + " after QRP apply — blocking ineffective.")
                   Write-Output ("VERIFY installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected smoke=FAIL")
+                  Write-Error ("SMOKE_FAIL: " + $smokeDomain + " still resolves to " + ($addrs -join ',') + " via " + $server + " after QRP apply — blocking ineffective (public A/AAAA).")
                   exit 1
                 }
                 $smoke = 'OK'
+                Write-Output ("SMOKE_OK " + $smokeDomain + " :: no A/AAAA via " + $server)
               } catch {
-                if ($_.Exception.Message -match 'SMOKE_FAIL') { throw }
-                # REFUSED / timeout / NXDOMAIN / name error ⇒ treated as blocked
-                $smoke = 'OK'
-                Write-Output ("SMOKE_OK " + $smokeDomain + " :: " + $_.Exception.Message)
+                $msg = $_.Exception.Message
+                if ($msg -match 'SMOKE_FAIL') { throw }
+                # Only treat known block/drop outcomes as success. Any other error is FAIL
+                # (previous code treated ALL exceptions as OK → false Succeeded on windc04).
+                if ($msg -match '(?i)NXDOMAIN|NameError|DNS_ERROR_RCODE_NAME_ERROR|not exist|REFUSED|SERVFAIL|ServerFailure|timed out|Timeout|No response|DNS server failure') {
+                  $smoke = 'OK'
+                  Write-Output ("SMOKE_OK " + $smokeDomain + " :: " + $msg)
+                } else {
+                  Write-Output ("VERIFY installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected smoke=FAIL")
+                  Write-Error ("SMOKE_FAIL: unexpected resolve error for " + $smokeDomain + " via " + $server + ": " + $msg)
+                  exit 1
+                }
               }
+            } elseif ($expected -gt 0) {
+              Write-Output ("VERIFY installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected smoke=FAIL")
+              Write-Error 'SMOKE_FAIL: no smoke domain in manifest — refusing Succeeded without Resolve-DnsName proof.'
+              exit 1
             }
 
             Write-Output ("VERIFY installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected smoke=$smoke")
             if ($counts.installed -ne $expected -or $counts.enabled -ne $expected) {
               Write-Error ("Live enabled count mismatch: installed=$($counts.installed) enabled=$($counts.enabled) expected=$expected")
+              exit 1
+            }
+            if ($smoke -eq 'FAIL') {
+              Write-Error 'SMOKE_FAIL: verify line smoke=FAIL'
               exit 1
             }
             Write-Output ("DONE policies=$expected")
