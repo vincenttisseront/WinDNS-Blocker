@@ -86,4 +86,27 @@ public class PolicyProbeTests
         Assert.Equal(expectedCount, policies.Count);
         Assert.Equal(expectedEnabled, policies.Count(p => p.IsEnabled));
     }
+
+    [Fact]
+    public void ParsePolicyInventory_PrefersInventoryCountsOverSampleJson()
+    {
+        // Sample JSON only has 2 names but INVENTORY says 2002 — probe must not report 0/2.
+        var output =
+            "INVENTORY installed=2002 enabled=2002 emptyFqdn=0\n" +
+            """[{"Name":"DnsBlocker_00001","IsEnabled":true,"Action":"IGNORE","FqdnCriterionLength":20}]""";
+        var policies = PowerShellDnsPolicyProvider.ParsePolicyInventory(output);
+        Assert.Equal(2002, policies.Count);
+        Assert.Equal(2002, policies.Count(p => p.IsEnabled));
+        Assert.Equal(0, policies.Count(p => p.FqdnCriterionLength <= 0));
+        Assert.Equal("DnsBlocker_00001", policies[0].Name);
+    }
+
+    [Fact]
+    public void ParsePolicyInventory_InventoryEmptyFqdnCounts()
+    {
+        var output = "INVENTORY installed=10 enabled=10 emptyFqdn=3\n[]";
+        var policies = PowerShellDnsPolicyProvider.ParsePolicyInventory(output);
+        Assert.Equal(10, policies.Count);
+        Assert.Equal(3, policies.Count(p => p.FqdnCriterionLength <= 0));
+    }
 }

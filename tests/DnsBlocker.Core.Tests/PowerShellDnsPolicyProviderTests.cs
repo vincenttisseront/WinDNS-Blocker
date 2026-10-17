@@ -218,6 +218,29 @@ public class PowerShellDnsPolicyProviderTests
     }
 
     [Fact]
+    public void ValidateApplyOutput_ThrowsOnEmptyInstalledEquals_HashtableUnwrapBug()
+    {
+        // Vincent 1.0.28 windc04: PS `return @{installed=…}` unwrapped → VERIFY installed= enabled=
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PowerShellDnsPolicyProvider.ValidateApplyOutput(
+                "VERIFY installed= enabled= expected=2002 smoke=OK\n",
+                "windc04.ar-systems.fr",
+                2002));
+        Assert.Contains("installed=", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildApplyScript_LiveCountsReturnPsCustomObjectNotHashtable()
+    {
+        var script = PowerShellDnsPolicyProvider.BuildApplyScript(
+            "windc04", "DnsBlocker_", "IGNORE", [["beeg.com"]], restartDnsAfterApply: false);
+        Assert.Contains("[pscustomobject]@{ installed = [int]$rows.Count; enabled = [int]$enabled }", script);
+        Assert.DoesNotContain("return @{ installed", script);
+        Assert.Contains("$installedLive = [int]$counts.installed", script);
+        Assert.Contains("VERIFY installed=$installedLive enabled=$enabledLive", script);
+    }
+
+    [Fact]
     public void EnrichDnsPolicyError_MapsWin32_9971_ToIdempotentGuidance()
     {
         var raw =

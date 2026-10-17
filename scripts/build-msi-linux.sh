@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.28: reliable in-app MSI upgrade — stop DnsBlocker service + UI (and settle file locks) before msiexec; fix missing Main.Update.ClosingForUpgrade FR/EN; MSI MajorUpgrade late REP retained. Builds on 1.0.27 sync progress.",
+  "releaseNotes": "1.0.29: fix QRP VERIFY empty installed=/enabled= (PS hashtable unwrap) and post-sync probe false zero (INVENTORY counts); serialize applies when DNS restart is on. Builds on 1.0.28 in-app upgrade.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
