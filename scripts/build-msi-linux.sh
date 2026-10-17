@@ -109,14 +109,26 @@ component_ids: list[str] = []
 service_exe_cid = service_exe_fid = None
 ui_exe_fid = None
 
+# File.Version is REQUIRED for late RemoveExistingProducts + stable Component GUIDs.
+# Unversioned keypaths that already exist are skipped by InstallFiles → ARP shows new
+# ProductVersion while DnsBlocker.UI.exe stays on the old bits (Vincent: UI still 1.0.20).
+file_ver = version if version.count(".") >= 3 else f"{version}.0"
+
+def file_version_attr(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in (".exe", ".dll"):
+        return f' Version="{file_ver}"'
+    return ""
+
 for p in all_files:
     rel = p.relative_to(root_files)
     did = dir_ids[rel.parent]
     cid = "c" + hashlib.sha1(rel.as_posix().encode()).hexdigest()[:16]
     fid = "f" + hashlib.sha1(rel.as_posix().encode()).hexdigest()[:16]
     component_ids.append(cid)
+    ver_attr = file_version_attr(p)
     body = f'''      <Component Id="{cid}" Guid="{gid(rel.as_posix())}">
-        <File Id="{fid}" Source="{xml_escape(str(p))}" KeyPath="yes" />
+        <File Id="{fid}" Source="{xml_escape(str(p))}" KeyPath="yes"{ver_attr} />
 '''
     if rel.as_posix().lower() == "dnsblocker.service.exe":
         service_exe_cid, service_exe_fid = cid, fid
@@ -350,6 +362,17 @@ if msiextract -C "$TMP_EXTRACT" "$MSI" >/dev/null 2>&1; then
       exit 1
     fi
     echo "OK: RemoveExistingProducts seq=$REP_SEQ (after InstallFinalize)"
+
+    # Gate: UI.exe + Service.exe must carry File.Version so late REP upgrades replace bits.
+    UI_VER=$(msiinfo export "$MSI" File 2>/dev/null | awk -F'\t' '$3=="DnsBlocker.UI.exe"{print $5; exit}')
+    SVC_VER=$(msiinfo export "$MSI" File 2>/dev/null | awk -F'\t' '$3=="DnsBlocker.Service.exe"{print $5; exit}')
+    UI_VER=${UI_VER//$'\r'/}
+    SVC_VER=${SVC_VER//$'\r'/}
+    if [[ -z "$UI_VER" || -z "$SVC_VER" ]]; then
+      echo "FAIL: File.Version empty (UI='$UI_VER' Service='$SVC_VER') — upgrades will leave old UI.exe" >&2
+      exit 1
+    fi
+    echo "OK: File.Version UI=$UI_VER Service=$SVC_VER"
   fi
 
   if [[ -n "$UI_EXE" ]] && command -v wrestool >/dev/null 2>&1; then
@@ -371,7 +394,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Stop perpetual Refreshing spinner after wizard ApplyNow (PR #20). CA type 242 + late REP retained.",
+  "releaseNotes": "Fix stuck UI version: stamp File.Version so late-REP upgrades replace UI.exe/Service.exe. CA 242 + late REP retained.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
