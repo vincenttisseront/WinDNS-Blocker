@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.27: live sync progress in Status Action Log (download / merge / QRP apply milestones / verify / done); Busy « Syncing blocklist… » header stays in sync; FR/EN. Builds on 1.0.26 DC resource cap.",
+  "releaseNotes": "1.0.31: Copy logs button on Logs tab copies the full Actions UI + Service (FileLogBuffer) buffer to the clipboard with brief Copied! feedback; FR/EN. Builds on 1.0.30 empty-first sync.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

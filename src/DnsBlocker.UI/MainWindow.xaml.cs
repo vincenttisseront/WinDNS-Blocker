@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using DnsBlocker.Core.Config;
 using DnsBlocker.Core.Diagnostics;
 using DnsBlocker.Core.Ipc;
@@ -30,6 +31,7 @@ public partial class MainWindow : Window
     private bool _syncRunning;
     private bool _syncDetached;
     private string? _lastSyncProgressKey;
+    private DispatcherTimer? _copyFeedbackTimer;
 
     public MainWindow()
     {
@@ -548,7 +550,10 @@ public partial class MainWindow : Window
     private async Task PresentSyncResultAsync(SyncRunResult result, bool fromWizard, bool showDialog)
     {
         var summary = result.Success
-            ? Loc.F("Main.Sync.Ok", result.DomainCount, result.Targets.Count)
+            ? result.DeferredCount > 0
+                ? Loc.F("Main.Sync.OkIncremental",
+                    result.DomainCount, result.AppliedCount, result.DeferredCount)
+                : Loc.F("Main.Sync.Ok", result.DomainCount, result.Targets.Count)
             : result.PartialSuccess
                 ? Loc.F("Main.Sync.Partial",
                     result.Targets.Count(t => t.Status == TargetSyncStatus.Succeeded),
@@ -568,9 +573,12 @@ public partial class MainWindow : Window
 
         foreach (var t in result.Targets)
         {
-            _journal.Write(t.Status == TargetSyncStatus.Succeeded
-                ? Loc.F("Main.Sync.TargetOk", t.Target, t.PolicyCount)
-                : Loc.F("Main.Sync.TargetFail", t.Target, t.Error));
+            _journal.Write(t.Status switch
+            {
+                TargetSyncStatus.Succeeded => Loc.F("Main.Sync.TargetOk", t.Target, t.PolicyCount),
+                TargetSyncStatus.Skipped => Loc.F("Main.Sync.TargetDeferred", t.Target, t.Error ?? ""),
+                _ => Loc.F("Main.Sync.TargetFail", t.Target, t.Error)
+            });
         }
 
         if (string.IsNullOrWhiteSpace(BlockTestDomainBox.Text))
@@ -1180,9 +1188,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Interactive update: download+verify in-process, launch elevated msiexec /qb, then exit the UI
-    /// so InstallFiles can replace DnsBlocker.UI.exe. Keeping the UI open during silent service msiexec
-    /// caused half-installed products (Start Menu shortcut → Missing Shortcut).
+    /// Interactive update: cancel local sync wait, download+verify, launch elevated prep+msiexec /qb,
+    /// then exit the UI. The elevated helper stops the DnsBlocker service and force-kills UI/Service
+    /// before msiexec so InstallFiles is not blocked (Restart Manager is disabled in the MSI).
     /// </summary>
     private async Task InstallUpdateExitingUiAsync(UpdateManifest manifest)
     {
@@ -1190,11 +1198,18 @@ public partial class MainWindow : Window
         _journal.Write(Loc.F("Main.Journal.InstallUpdate", manifest.Version));
         try
         {
+            // Stop UI-side sync wait so Shutdown is not blocked; service-side sync is killed by prep.
+            try { _syncCts?.Cancel(); }
+            catch { /* ignore */ }
+
             MessageBox.Show(
                 Loc.T("Main.Update.ClosingForUpgrade"),
                 Loc.T("Main.Update.Title"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
+
+            UpdateStatusLine.Text = Loc.T("Main.Update.PreparingShutdown");
+            _journal.Write(Loc.T("Main.Journal.PreparingShutdown"));
 
             // Prefer UI-side elevated install (not silent IPC) so we control shutdown order.
             var installer = new UpdateInstaller(waitForExit: false);
@@ -1210,7 +1225,7 @@ public partial class MainWindow : Window
 
             UpdateStatusLine.Text = Loc.T("Main.Update.MsiexecStarted");
             _journal.Write(Loc.T("Main.Journal.InstallStarted"));
-            // Exit immediately so file locks clear before msiexec InstallFiles.
+            // Exit immediately — elevated prep waits briefly then force-kills if we are still alive.
             Application.Current.Shutdown();
         }
         catch (Exception ex)
@@ -1277,6 +1292,53 @@ public partial class MainWindow : Window
             _ => LangAutoItem
         };
         _languageBoxReady = true;
+    }
+
+    private void CopyLogs_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Prefer the visible buffer (Actions UI + Service sections from ActionJournal.Render).
+            var text = LogsBox.Text;
+            if (string.IsNullOrWhiteSpace(text))
+                text = _journal.Render(_lastServiceLogs);
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                ShowCopyFeedback(Loc.T("Logs.CopyEmpty"), success: false);
+                return;
+            }
+
+            Clipboard.SetText(text);
+            ShowCopyFeedback(Loc.T("Logs.Copied"), success: true);
+        }
+        catch
+        {
+            ShowCopyFeedback(Loc.T("Logs.CopyFailed"), success: false);
+        }
+    }
+
+    private void ShowCopyFeedback(string message, bool success)
+    {
+        CopyLogsFeedback.Text = message;
+        CopyLogsFeedback.Foreground = success
+            ? new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x32))
+            : System.Windows.Media.Brushes.DarkRed;
+        CopyLogsFeedback.Visibility = Visibility.Visible;
+
+        _copyFeedbackTimer?.Stop();
+        _copyFeedbackTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _copyFeedbackTimer.Tick -= ClearCopyFeedback;
+        _copyFeedbackTimer.Tick += ClearCopyFeedback;
+        _copyFeedbackTimer.Start();
+    }
+
+    private void ClearCopyFeedback(object? sender, EventArgs e)
+    {
+        _copyFeedbackTimer?.Stop();
+        CopyLogsFeedback.Visibility = Visibility.Collapsed;
+        CopyLogsFeedback.Text = "";
     }
 
     private void RefreshLogsView()

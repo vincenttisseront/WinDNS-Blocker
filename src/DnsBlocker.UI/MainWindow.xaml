@@ -287,8 +287,16 @@
 
       <TabItem Header="{DynamicResource Tab.Logs}">
         <DockPanel Margin="0,12,0,0">
-          <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" Foreground="{StaticResource MutedBrush}"
-                     Text="{DynamicResource Logs.Hint}"/>
+          <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8" LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+              <Button x:Name="CopyLogsButton" Content="{DynamicResource Btn.CopyLogs}"
+                      Click="CopyLogs_Click" FontWeight="SemiBold" MinWidth="120" Padding="12,4"/>
+              <TextBlock x:Name="CopyLogsFeedback" VerticalAlignment="Center" Margin="10,0,0,0"
+                         Foreground="#2E7D32" FontWeight="SemiBold" Visibility="Collapsed"/>
+            </StackPanel>
+            <TextBlock VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"
+                       Text="{DynamicResource Logs.Hint}" TextWrapping="Wrap"/>
+          </DockPanel>
           <TextBox x:Name="LogsBox" IsReadOnly="True" AcceptsReturn="True"
                    VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
                    FontFamily="Consolas" Background="{StaticResource PanelBrush}"/>

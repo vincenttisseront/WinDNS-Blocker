@@ -21,13 +21,14 @@
     Language="1033">
 
     <!--
-      afterInstallInitialize: remove previous product early so the service is stopped
-      and old files are cleared before new files are installed (safe in-place upgrade).
+      afterInstallFinalize: late RemoveExistingProducts (matches wixl build + gates).
+      Early REP + locked UI.exe caused Missing Shortcut / half-installed upgrades.
+      In-app update prep stops service+UI before msiexec so InstallFiles can replace bits.
     -->
     <MajorUpgrade
       DowngradeErrorMessage="A newer version of [ProductName] is already installed. Please uninstall it first."
       AllowSameVersionUpgrades="yes"
-      Schedule="afterInstallInitialize" />
+      Schedule="afterInstallFinalize" />
 
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
