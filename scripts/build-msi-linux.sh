@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.31: Copy logs button on Logs tab copies the full Actions UI + Service (FileLogBuffer) buffer to the clipboard with brief Copied! feedback; FR/EN. Builds on 1.0.30 empty-first sync.",
+  "releaseNotes": "1.0.32: Fix QRP probe/VERIFY installed=0 after apply OK — lightweight inventory + sentinel/registry fallbacks so live Get-DnsServerQueryResolutionPolicy counts match apply; refuse smoke=OK with zero policies.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

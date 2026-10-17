@@ -147,12 +147,50 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         var isLocal = LocalDnsTarget.IsLocalTarget(computerName);
         var localLiteral = isLocal ? "$true" : "$false";
 
+        // Probe must NOT hydrate Criteria for all 2000+ policies (WinRM/PS 5.1 → empty / false zero).
+        // Count via lightweight Name/IsEnabled rows + sentinel/registry fallbacks; Criteria only for sample.
         var script = $$"""
             $ErrorActionPreference = 'Stop'
             Import-Module DnsServer -ErrorAction Stop
             $computer = '{{EscapePsString(computerName)}}'
             $prefix = '{{EscapePsString(policyNamePrefix)}}'
             $local = {{localLiteral}}
+            {{BuildDnsBlockerInventoryHelpersPs()}}
+            $inv = $null
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              $inv = Get-DnsBlockerPolicyInventory -Computer $computer -Prefix $prefix -Local $local
+              if ([int]$inv.installed -gt 0) { break }
+              Start-Sleep -Seconds 1
+            }
+            Write-Output ("INVENTORY installed=$([int]$inv.installed) enabled=$([int]$inv.enabled) emptyFqdn=$([int]$inv.emptyFqdn) source=$($inv.source) listed=$([int]$inv.listed) sentinel=$([int][bool]$inv.sentinel)")
+            if (@($inv.sample).Count -eq 0) {
+              Write-Output '[]'
+            } else {
+              Write-Output (ConvertTo-Json -InputObject @($inv.sample) -Compress -Depth 4)
+            }
+            """;
+
+        var output = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
+        return ParsePolicyInventory(output);
+    }
+
+    /// <summary>
+    /// Shared PowerShell helpers for QRP inventory/count. Lightweight Name/IsEnabled listing first;
+    /// Criteria is only read for a small sample. Falls back to -Name wildcard, sentinel D5 scan,
+    /// and local registry when Get|*Name -like returns 0 while policies still exist (Vincent 1.0.31).
+    /// </summary>
+    internal static string BuildDnsBlockerInventoryHelpersPs() => """
+            function Get-DnsBlockerPolicyName($policy) {
+              if ($null -eq $policy) { return '' }
+              if ($policy.PSObject.Properties['Name'] -and $policy.Name) { return [string]$policy.Name }
+              if ($policy.PSObject.Properties['PolicyName'] -and $policy.PolicyName) { return [string]$policy.PolicyName }
+              return ''
+            }
+            function Test-DnsBlockerNameMatch([string]$Name, [string]$Prefix) {
+              if ([string]::IsNullOrEmpty($Name) -or [string]::IsNullOrEmpty($Prefix)) { return $false }
+              if ($Name.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+              return ($Name -like ($Prefix + '*'))
+            }
             function Get-DnsBlockerFqdnLen($policy) {
               if ($null -eq $policy) { return 0 }
               $n = 0
@@ -169,48 +207,117 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               }
               return $n
             }
-            if ($local) {
-              $raw = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop |
-                Where-Object { $_.Name -like ($prefix + '*') })
-            } else {
-              $raw = @(Get-DnsServerQueryResolutionPolicy -ComputerName $computer -ErrorAction Stop |
-                Where-Object { $_.Name -like ($prefix + '*') })
-            }
-            $installed = 0
-            $enabled = 0
-            $emptyFqdn = 0
-            $sample = New-Object System.Collections.Generic.List[object]
-            foreach ($p in $raw) {
-              $installed++
+            function Get-DnsBlockerIsEnabled($policy) {
               $isEn = $true
-              if ($null -ne $p.IsEnabled) { $isEn = [bool]$p.IsEnabled }
-              elseif ($null -ne $p.Enabled) { $isEn = [bool]$p.Enabled }
-              elseif ($null -ne $p.IsDisabled) { $isEn = -not [bool]$p.IsDisabled }
-              if ($isEn) { $enabled++ }
-              $fqdnLen = [int](Get-DnsBlockerFqdnLen $p)
-              if ($fqdnLen -le 0) { $emptyFqdn++ }
-              if ($sample.Count -lt 40) {
+              if ($null -ne $policy.IsEnabled) { $isEn = [bool]$policy.IsEnabled }
+              elseif ($null -ne $policy.Enabled) { $isEn = [bool]$policy.Enabled }
+              elseif ($null -ne $policy.IsDisabled) { $isEn = -not [bool]$policy.IsDisabled }
+              return $isEn
+            }
+            function Get-DnsBlockerPolicyInventory([string]$Computer, [string]$Prefix, [bool]$Local) {
+              $rows = New-Object System.Collections.Generic.List[object]
+              $listed = 0
+              $source = 'list'
+              $sentinel = $false
+              $regCount = -1
+              try {
+                if ($Local) { $all = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop) }
+                else { $all = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -ErrorAction Stop) }
+                $listed = @($all).Count
+                foreach ($p in $all) {
+                  $n = Get-DnsBlockerPolicyName $p
+                  if (-not (Test-DnsBlockerNameMatch $n $Prefix)) { continue }
+                  [void]$rows.Add([pscustomobject]@{ Name = $n; IsEnabled = (Get-DnsBlockerIsEnabled $p); Action = [string]$p.Action })
+                }
+              } catch {
+                $listed = -1
+                $source = 'list-error'
+              }
+              if ($rows.Count -eq 0) {
+                try {
+                  if ($Local) { $byName = @(Get-DnsServerQueryResolutionPolicy -Name ($Prefix + '*') -ErrorAction SilentlyContinue) }
+                  else { $byName = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name ($Prefix + '*') -ErrorAction SilentlyContinue) }
+                  foreach ($p in @($byName)) {
+                    if ($null -eq $p) { continue }
+                    $n = Get-DnsBlockerPolicyName $p
+                    if (-not $n) { continue }
+                    if (-not (Test-DnsBlockerNameMatch $n $Prefix)) { continue }
+                    [void]$rows.Add([pscustomobject]@{ Name = $n; IsEnabled = (Get-DnsBlockerIsEnabled $p); Action = [string]$p.Action })
+                  }
+                  if ($rows.Count -gt 0) { $source = 'name-wildcard' }
+                } catch { }
+              }
+              $sentinelName = $Prefix + '00001'
+              $sentinelObj = $null
+              try {
+                if ($Local) { $sentinelObj = Get-DnsServerQueryResolutionPolicy -Name $sentinelName -ErrorAction SilentlyContinue }
+                else { $sentinelObj = Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $sentinelName -ErrorAction SilentlyContinue }
+              } catch { $sentinelObj = $null }
+              $sentinel = ($null -ne $sentinelObj)
+              if ($rows.Count -eq 0 -and $sentinel) {
+                $source = 'sentinel-scan'
+                $miss = 0
+                for ($i = 1; $i -le 100000 -and $miss -lt 25; $i++) {
+                  $name = $Prefix + $i.ToString('00000')
+                  $p = $null
+                  try {
+                    if ($Local) { $p = Get-DnsServerQueryResolutionPolicy -Name $name -ErrorAction SilentlyContinue }
+                    else { $p = Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $name -ErrorAction SilentlyContinue }
+                  } catch { $p = $null }
+                  if ($null -eq $p) { $miss++; continue }
+                  $miss = 0
+                  [void]$rows.Add([pscustomobject]@{ Name = $name; IsEnabled = (Get-DnsBlockerIsEnabled $p); Action = [string]$p.Action })
+                }
+              }
+              if ($Local) {
+                $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\DNS Server\Policies'
+                if (Test-Path -LiteralPath $regPath) {
+                  $regCount = @(Get-ChildItem -LiteralPath $regPath -ErrorAction SilentlyContinue |
+                    Where-Object { $_.PSChildName -like ($Prefix + '*') }).Count
+                  if ($rows.Count -eq 0 -and $regCount -gt 0) {
+                    $source = 'registry'
+                    for ($i = 0; $i -lt $regCount; $i++) {
+                      [void]$rows.Add([pscustomobject]@{
+                        Name = ($Prefix + ($i + 1).ToString('00000'))
+                        IsEnabled = $true
+                        Action = ''
+                      })
+                    }
+                  }
+                }
+              }
+              $enabled = 0
+              foreach ($r in $rows) { if ($r.IsEnabled) { $enabled++ } }
+              $sample = New-Object System.Collections.Generic.List[object]
+              $emptyFqdn = 0
+              foreach ($r in $rows) {
+                if ($sample.Count -ge 40) { break }
+                $fqdnLen = 1
+                try {
+                  if ($Local) { $full = Get-DnsServerQueryResolutionPolicy -Name $r.Name -ErrorAction Stop }
+                  else { $full = Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $r.Name -ErrorAction Stop }
+                  $fqdnLen = [int](Get-DnsBlockerFqdnLen $full)
+                } catch { $fqdnLen = 0 }
+                if ($fqdnLen -le 0) { $emptyFqdn++ }
                 [void]$sample.Add([pscustomobject]@{
-                  Name = [string]$p.Name
-                  IsEnabled = $isEn
-                  Action = [string]$p.Action
+                  Name = [string]$r.Name
+                  IsEnabled = [bool]$r.IsEnabled
+                  Action = [string]$r.Action
                   FqdnCriterionLength = $fqdnLen
                 })
               }
-            }
-            # Counts first — ConvertTo-Json of 2000+ policies is truncated/unreliable on Windows PowerShell 5.1
-            # and previously made post-sync probe report installed=0 while apply VERIFY had succeeded.
-            Write-Output ("INVENTORY installed=$installed enabled=$enabled emptyFqdn=$emptyFqdn")
-            if ($sample.Count -eq 0) {
-              Write-Output '[]'
-            } else {
-              Write-Output (ConvertTo-Json -InputObject @($sample.ToArray()) -Compress -Depth 4)
+              [pscustomobject]@{
+                installed = [int]$rows.Count
+                enabled = [int]$enabled
+                emptyFqdn = [int]$emptyFqdn
+                sample = @($sample.ToArray())
+                source = [string]$source
+                listed = [int]$listed
+                sentinel = [bool]$sentinel
+                regCount = [int]$regCount
+              }
             }
             """;
-
-        var output = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
-        return ParsePolicyInventory(output);
-    }
 
     /// <summary>Policy name DnsBlocker_00001 (D5 — supports &gt;9999 chunks after FQDN budget split).</summary>
     public static string FormatPolicyName(string policyNamePrefix, int index1Based) =>
@@ -457,15 +564,37 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         if (string.IsNullOrWhiteSpace(output))
             throw new InvalidOperationException($"Empty PowerShell output after QRP apply on '{computerName}'.");
 
-        var verifyLine = output
+        // Prefer a VERIFY line whose installed= matches expected (ignore stale FAIL lines if a later recount succeeded).
+        var verifyLines = output
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .LastOrDefault(l => l.StartsWith("VERIFY ", StringComparison.OrdinalIgnoreCase));
+            .Where(l => l.StartsWith("VERIFY ", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        string? verifyLine = null;
+        foreach (var line in verifyLines.AsEnumerable().Reverse())
+        {
+            try
+            {
+                if (ReadVerifyInt(line, "installed") == expectedPolicies
+                    && ReadVerifyInt(line, "enabled") == expectedPolicies)
+                {
+                    verifyLine = line;
+                    break;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // incomplete VERIFY line (hashtable unwrap) — keep scanning
+            }
+        }
+
+        verifyLine ??= verifyLines.LastOrDefault();
 
         if (verifyLine is null)
             throw new InvalidOperationException(
                 $"QRP apply on '{computerName}' did not emit VERIFY line (expected {expectedPolicies} policies). Output: {TrimForError(output)}");
 
-        // VERIFY installed=N enabled=M expected=E smoke=OK|SKIP
+        // VERIFY installed=N enabled=M expected=E smoke=OK|SKIP|FAIL
         var installed = ReadVerifyInt(verifyLine, "installed");
         var enabled = ReadVerifyInt(verifyLine, "enabled");
         var expected = ReadVerifyInt(verifyLine, "expected");
@@ -473,6 +602,12 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         if (expected != expectedPolicies)
             throw new InvalidOperationException(
                 $"VERIFY expected mismatch on '{computerName}': script expected={expected}, hub expected={expectedPolicies}. {verifyLine}");
+
+        // Defense: smoke=OK with installed=0 must never mean Succeeded (Vincent 1.0.31 windc04).
+        if (expectedPolicies > 0 && installed <= 0)
+            throw new InvalidOperationException(
+                $"QRP live count mismatch on '{computerName}': installed={installed}, enabled={enabled}, expected={expectedPolicies}. " +
+                "Succeeded push without Enabled policies will not block. " + verifyLine);
 
         if (installed != expectedPolicies || enabled != expectedPolicies)
             throw new InvalidOperationException(
@@ -482,6 +617,13 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         if (verifyLine.Contains("smoke=FAIL", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
                 $"QRP smoke test failed on '{computerName}': sample domain still resolves after policy apply. {verifyLine}");
+
+        if (verifyLine.Contains("smoke=OK", StringComparison.OrdinalIgnoreCase)
+            && (installed <= 0 || enabled <= 0))
+        {
+            throw new InvalidOperationException(
+                $"QRP VERIFY refused on '{computerName}': smoke=OK is invalid when installed/enabled is 0. {verifyLine}");
+        }
 
         if (expectedPolicies > 0
             && verifyLine.Contains("smoke=SKIP", StringComparison.OrdinalIgnoreCase))
@@ -804,20 +946,28 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
 
             function Find-DnsBlockerSmokeInCriteria([string]$Computer, [string]$Prefix, [bool]$Local, [string]$SmokeDomain) {
               if (-not $SmokeDomain) { return $null }
-              if ($Local) {
-                $rows = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop | Where-Object { $_.Name -like ($Prefix + '*') })
-              } else {
-                $rows = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -ErrorAction Stop | Where-Object { $_.Name -like ($Prefix + '*') })
+              # Prefer sentinel + name scan over bulk Get|Where (Criteria payload / filter false-zero).
+              $names = New-Object System.Collections.Generic.List[string]
+              $inv = Get-DnsBlockerPolicyInventory -Computer $Computer -Prefix $Prefix -Local $Local
+              foreach ($r in @($inv.sample)) { if ($r.Name) { [void]$names.Add([string]$r.Name) } }
+              if ($names.Count -eq 0 -and [int]$inv.installed -gt 0) {
+                for ($i = 1; $i -le [Math]::Min([int]$inv.installed, 5); $i++) {
+                  [void]$names.Add($Prefix + $i.ToString('00000'))
+                }
               }
+              if ($names.Count -eq 0) { [void]$names.Add($Prefix + '00001') }
               $apex = $SmokeDomain.Trim().Trim('.').ToLowerInvariant()
               $wild = '*.' + $apex
-              foreach ($p in $rows) {
+              foreach ($name in $names) {
+                try {
+                  if ($Local) { $p = Get-DnsServerQueryResolutionPolicy -Name $name -ErrorAction Stop }
+                  else { $p = Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $name -ErrorAction Stop }
+                } catch { continue }
                 $text = (Get-DnsBlockerFqdnCriterionText $p).ToLowerInvariant()
                 if ($text.Length -eq 0) { continue }
-                # Token match: EQ,beeg.com or ,beeg.com, or ,beeg.com| or ends with ,beeg.com
                 if ($text -match ('(?i)(^|[,|])' + [regex]::Escape($apex) + '([,|]|$)') -or
                     $text -match ('(?i)(^|[,|])' + [regex]::Escape($wild) + '([,|]|$)')) {
-                  return $p.Name
+                  return $name
                 }
               }
               return $null
@@ -855,22 +1005,18 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               # MUST return [pscustomobject], never a Hashtable: `return @{...}` is enumerated into
               # DictionaryEntry[] on the pipeline, so `$counts.installed` becomes $null and VERIFY
               # prints `installed= enabled=` (Vincent windc04 1.0.28: smoke=OK but C# rejects the line).
-              if ($Local) {
-                $rows = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop | Where-Object { $_.Name -like ($Prefix + '*') })
-              } else {
-                $rows = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -ErrorAction Stop | Where-Object { $_.Name -like ($Prefix + '*') })
+              # Use inventory helper (lightweight + sentinel/registry fallbacks) — same path as post-sync probe.
+              $inv = Get-DnsBlockerPolicyInventory -Computer $Computer -Prefix $Prefix -Local $Local
+              [pscustomobject]@{
+                installed = [int]$inv.installed
+                enabled = [int]$inv.enabled
+                source = [string]$inv.source
+                listed = [int]$inv.listed
+                sentinel = [bool]$inv.sentinel
               }
-              $enabled = 0
-              foreach ($p in $rows) {
-                $en = $true
-                if ($null -ne $p.IsEnabled) { $en = [bool]$p.IsEnabled }
-                elseif ($null -ne $p.Enabled) { $en = [bool]$p.Enabled }
-                elseif ($null -ne $p.IsDisabled) { $en = -not [bool]$p.IsDisabled }
-                if ($en) { $enabled++ }
-              }
-              [pscustomobject]@{ installed = [int]$rows.Count; enabled = [int]$enabled }
             }
 
+            {{BuildDnsBlockerInventoryHelpersPs()}}
             Import-Module DnsServer -ErrorAction Stop
             $manifestPath = '{{pathLiteral}}'
             if (-not (Test-Path -LiteralPath $manifestPath)) {
@@ -963,15 +1109,24 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               Write-Output 'DNS_RESTART_SKIPPED'
             }
 
-            $counts = Get-DnsBlockerLiveCounts -Computer $computer -Prefix $prefix -Local $local
-            # Coerce — never emit empty installed=/enabled= (C# requires installed=\d+).
+            # Recount with retries — Get|*Name -like can return 0 right after DNS restart while
+            # sentinel/registry still show policies (Vincent 1.0.31: smoke=OK + installed=0).
             $installedLive = 0
             $enabledLive = 0
-            try { $installedLive = [int]$counts.installed } catch { $installedLive = 0 }
-            try { $enabledLive = [int]$counts.enabled } catch { $enabledLive = 0 }
+            $countSource = 'none'
+            $countAttempt = 0
+            for ($countAttempt = 1; $countAttempt -le 30; $countAttempt++) {
+              $counts = Get-DnsBlockerLiveCounts -Computer $computer -Prefix $prefix -Local $local
+              try { $installedLive = [int]$counts.installed } catch { $installedLive = 0 }
+              try { $enabledLive = [int]$counts.enabled } catch { $enabledLive = 0 }
+              try { $countSource = [string]$counts.source } catch { $countSource = 'unknown' }
+              if ($installedLive -gt 0 -and $enabledLive -gt 0) { break }
+              Start-Sleep -Seconds 1
+            }
+            Write-Output ("COUNT_SOURCE source=$countSource installed=$installedLive enabled=$enabledLive expected=$expected attempt=$countAttempt")
             if ($installedLive -le 0 -or $enabledLive -le 0) {
               Write-Output ("VERIFY installed=$installedLive enabled=$enabledLive expected=$expected smoke=FAIL")
-              Write-Error ("SMOKE_FAIL: Enabled QRP count is 0 after apply (installed=$installedLive enabled=$enabledLive expected=$expected). Succeeded push without Enabled policies will not block.")
+              Write-Error ("SMOKE_FAIL: Enabled QRP count is 0 after apply (installed=$installedLive enabled=$enabledLive expected=$expected source=$countSource). Succeeded push without Enabled policies will not block.")
               exit 1
             }
 
@@ -1047,9 +1202,17 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               exit 1
             }
 
-            Write-Output ("VERIFY installed=$installedLive enabled=$enabledLive expected=$expected smoke=$smoke")
+            # Final recount after smoke (same inventory helper as probe) — never claim smoke=OK with 0.
+            $counts = Get-DnsBlockerLiveCounts -Computer $computer -Prefix $prefix -Local $local
+            try { $installedLive = [int]$counts.installed } catch { $installedLive = 0 }
+            try { $enabledLive = [int]$counts.enabled } catch { $enabledLive = 0 }
+            try { $countSource = [string]$counts.source } catch { }
+            if ($installedLive -le 0 -or $enabledLive -le 0 -or $installedLive -ne $expected -or $enabledLive -ne $expected) {
+              $smoke = 'FAIL'
+            }
+            Write-Output ("VERIFY installed=$installedLive enabled=$enabledLive expected=$expected smoke=$smoke source=$countSource")
             if ($installedLive -ne $expected -or $enabledLive -ne $expected) {
-              Write-Error ("Live enabled count mismatch: installed=$installedLive enabled=$enabledLive expected=$expected")
+              Write-Error ("Live enabled count mismatch: installed=$installedLive enabled=$enabledLive expected=$expected source=$countSource")
               exit 1
             }
             if ($smoke -eq 'FAIL') {
