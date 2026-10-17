@@ -42,7 +42,8 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             throw new PlatformNotSupportedException("PowerShellDnsPolicyProvider requires Windows.");
 
         var normalizedAction = action.Equals("IGNORE", StringComparison.OrdinalIgnoreCase) ? "IGNORE" : "DENY";
-        var normalized = NormalizeChunks(chunks, MaxFqdnCriterionChars);
+        // SyncEngine already ChunkByFqdnBudget — reuse when within budget (avoids a second full flatten of 6M domains).
+        var normalized = EnsureFqdnBudget(chunks, MaxFqdnCriterionChars);
 
         var manifestPath = Path.Combine(
             Path.GetTempPath(),
@@ -216,11 +217,41 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
                     continue;
                 if (domain.Contains(',', StringComparison.Ordinal))
                     continue;
-                flat.Add(domain.Trim().Trim('.').ToLowerInvariant());
+                // Re-normalize sinkhole pollution if older in-memory sets still carry it.
+                if (!Ingest.DomainListParser.TryNormalizeDomain(domain, out var normalized))
+                    continue;
+                flat.Add(normalized);
             }
         }
 
         return Ingest.DomainListParser.ChunkByFqdnBudget(flat, maxFqdnCriterionChars);
+    }
+
+    /// <summary>
+    /// Pass through pre-budgeted chunks from SyncEngine; only rebuild when a criterion exceeds the budget.
+    /// </summary>
+    public static IReadOnlyList<IReadOnlyList<string>> EnsureFqdnBudget(
+        IReadOnlyList<IReadOnlyList<string>> chunks,
+        int maxFqdnCriterionChars)
+    {
+        if (chunks.Count == 0)
+            return chunks;
+
+        foreach (var chunk in chunks)
+        {
+            var len = 3; // EQ,
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                var d = chunk[i];
+                if (string.IsNullOrWhiteSpace(d) || d.Contains(',', StringComparison.Ordinal))
+                    return NormalizeChunks(chunks, maxFqdnCriterionChars);
+                len += (i == 0 ? 0 : 1) + d.Length;
+                if (len > maxFqdnCriterionChars)
+                    return NormalizeChunks(chunks, maxFqdnCriterionChars);
+            }
+        }
+
+        return chunks;
     }
 
     public static string EnrichDnsPolicyError(string raw, string computerName)
@@ -384,45 +415,53 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         // Prefer a domain that should resolve on the public Internet when unblocked (Vincent repro).
         string? smokeDomain = PreferSmokeDomain(chunks);
         var sentinelFqdn = BuildSentinelFqdn(chunks);
+        var expected = CountExpectedPolicies(chunks);
 
-        var policies = new List<object>(chunks.Count + 1);
+        // Stream to disk — avoid a second giant in-memory JSON string for multi-million FQDN manifests.
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+        using var writer = new Utf8JsonWriter(fs);
+        writer.WriteStartObject();
+        writer.WriteString("computer", computerName);
+        writer.WriteBoolean("local", isLocal);
+        writer.WriteString("prefix", policyNamePrefix);
+        writer.WriteString("action", action);
+        writer.WriteBoolean("restartDns", restartDnsAfterApply);
+        if (smokeDomain is null)
+            writer.WriteNull("smokeDomain");
+        else
+            writer.WriteString("smokeDomain", smokeDomain);
+        writer.WriteNumber("expected", expected);
+        writer.WritePropertyName("policies");
+        writer.WriteStartArray();
+
         var order = 1;
         if (sentinelFqdn is not null)
         {
-            policies.Add(new
-            {
-                name = FormatPolicyName(policyNamePrefix, order),
-                fqdn = sentinelFqdn,
-                order
-            });
+            WriteManifestPolicy(writer, FormatPolicyName(policyNamePrefix, order), sentinelFqdn, order);
             order++;
         }
 
         for (var i = 0; i < chunks.Count; i++)
         {
-            policies.Add(new
-            {
-                name = FormatPolicyName(policyNamePrefix, order),
-                fqdn = "EQ," + string.Join(",", chunks[i]),
-                order
-            });
+            WriteManifestPolicy(
+                writer,
+                FormatPolicyName(policyNamePrefix, order),
+                "EQ," + string.Join(",", chunks[i]),
+                order);
             order++;
         }
 
-        var manifest = new
-        {
-            computer = computerName,
-            local = isLocal,
-            prefix = policyNamePrefix,
-            action,
-            restartDns = restartDnsAfterApply,
-            smokeDomain,
-            expected = policies.Count,
-            policies
-        };
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
 
-        var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = false });
-        File.WriteAllText(path, json, Encoding.UTF8);
+    private static void WriteManifestPolicy(Utf8JsonWriter writer, string name, string fqdn, int order)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("name", name);
+        writer.WriteString("fqdn", fqdn);
+        writer.WriteNumber("order", order);
+        writer.WriteEndObject();
     }
 
     /// <summary>

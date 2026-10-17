@@ -40,6 +40,73 @@ public class DomainListParserTests
     }
 
     [Fact]
+    public void ParseDomains_StripsHostsSinkholePrefixes_VincentWindc04()
+    {
+        // Smoking gun: QRP Criteria was EQ,0.0.0.0.creative.hpyrdr.com. — never matched queries.
+        var content = """
+            # StevenBlack / pi-hole hosts
+            0.0.0.0 beeg.com
+            0.0.0.0 ads.example.com
+            127.0.0.1 tracker.evil.net
+            ::1 localhost
+            # Glued (no space) — seen in wild / bad exports
+            0.0.0.0.creative.hpyrdr.com.
+            0.0.0.0.hpyrdr.com.
+            127.0.0.1.malware.test.
+            0.ackzany.com.
+            0.blissfullyzebra.com.
+            """;
+
+        var domains = DomainListParser.ParseDomains(content);
+        Assert.Contains("beeg.com", domains);
+        Assert.Contains("ads.example.com", domains);
+        Assert.Contains("tracker.evil.net", domains);
+        Assert.Contains("creative.hpyrdr.com", domains);
+        Assert.Contains("hpyrdr.com", domains);
+        Assert.Contains("malware.test", domains);
+        Assert.Contains("ackzany.com", domains);
+        Assert.Contains("blissfullyzebra.com", domains);
+
+        Assert.DoesNotContain(domains, d => d.StartsWith("0.0.0.0.", StringComparison.Ordinal));
+        Assert.DoesNotContain(domains, d => d.StartsWith("127.0.0.1.", StringComparison.Ordinal));
+        Assert.DoesNotContain(domains, d => d.EndsWith('.'));
+        Assert.DoesNotContain("0.0.0.0.creative.hpyrdr.com", domains);
+        Assert.DoesNotContain("0.ackzany.com", domains);
+        Assert.DoesNotContain("localhost", domains);
+    }
+
+    [Fact]
+    public void TryNormalizeDomain_RejectsIpAndSinkholeJunk()
+    {
+        Assert.False(DomainListParser.TryNormalizeDomain("0.0.0.0", out _));
+        Assert.False(DomainListParser.TryNormalizeDomain("127.0.0.1", out _));
+        Assert.True(DomainListParser.TryNormalizeDomain("0.0.0.0.beeg.com.", out var beeg));
+        Assert.Equal("beeg.com", beeg);
+        Assert.True(DomainListParser.TryNormalizeDomain("Beeg.COM.", out var beeg2));
+        Assert.Equal("beeg.com", beeg2);
+    }
+
+    [Fact]
+    public void PrepareForQrpInPlace_KeepsBeegApexWithoutIpPrefix()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "*.beeg.com",
+            "www.beeg.com",
+            "0.0.0.0.beeg.com" // if somehow present before normalize path
+        };
+        // Normalize polluting entry the same way ingest does
+        Assert.True(DomainListParser.TryNormalizeDomain("0.0.0.0.beeg.com", out var fixedBeeg));
+        set.Remove("0.0.0.0.beeg.com");
+        set.Add(fixedBeeg);
+        DomainListParser.PrepareForQrpInPlace(set);
+        Assert.Contains("*.beeg.com", set);
+        Assert.Contains("beeg.com", set);
+        Assert.DoesNotContain("www.beeg.com", set);
+        Assert.DoesNotContain("0.0.0.0.beeg.com", set);
+    }
+
+    [Fact]
     public void ParseDomains_AbpAndDomainswildFormats()
     {
         var content = """

@@ -1,3 +1,4 @@
+using DnsBlocker.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -39,9 +40,11 @@ public sealed class BlocklistIngestor
         blocklistUrls = blocklistUrls.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         whitelistUrls = whitelistUrls.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-        _logger.LogInformation("Resolved {BlockCount} blocklist URLs and {WhiteCount} whitelist URLs",
-            blocklistUrls.Count, whitelistUrls.Count);
+        _logger.LogInformation(
+            "Resolved {BlockCount} blocklist URLs and {WhiteCount} whitelist URLs (RSS {Rss})",
+            blocklistUrls.Count, whitelistUrls.Count, ProcessMemory.FormatWorkingSet());
 
+        // Single working set for blocked domains — stream each source (no full-file string + HashSet pair).
         var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
@@ -50,9 +53,11 @@ public sealed class BlocklistIngestor
         {
             try
             {
-                var content = await DownloadTextAsync(url, cancellationToken).ConfigureAwait(false);
-                foreach (var d in DomainListParser.ParseDomains(content))
-                    blocked.Add(d);
+                var before = blocked.Count;
+                await DownloadDomainsIntoAsync(url, blocked, cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation(
+                    "Blocklist {Url}: +{Added} (total {Total}, RSS {Rss})",
+                    url, blocked.Count - before, blocked.Count, ProcessMemory.FormatWorkingSet());
             }
             catch (Exception ex)
             {
@@ -66,9 +71,7 @@ public sealed class BlocklistIngestor
         {
             try
             {
-                var content = await DownloadTextAsync(url, cancellationToken).ConfigureAwait(false);
-                foreach (var d in DomainListParser.ParseDomains(content))
-                    allowed.Add(d);
+                await DownloadDomainsIntoAsync(url, allowed, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -78,14 +81,40 @@ public sealed class BlocklistIngestor
             }
         }
 
-        var final = DomainListParser.ApplyWhitelist(blocked, allowed);
+        var wlCount = allowed.Count;
+        DomainListParser.ApplyWhitelistInPlace(blocked, allowed);
+        allowed.Clear();
+        ProcessMemory.TrimAfterLargeDrop();
+
+        _logger.LogInformation(
+            "Ingest complete: {Domains} domains after whitelist (wl sources had {WlCount}, RSS {Rss})",
+            blocked.Count, wlCount, ProcessMemory.FormatWorkingSet());
+
         return new IngestResult
         {
-            Domains = final,
-            WhitelistCount = allowed.Count,
+            Domains = blocked,
+            WhitelistCount = wlCount,
             SourceListCount = blocklistUrls.Count,
             Errors = errors
         };
+    }
+
+    private async Task DownloadDomainsIntoAsync(
+        string url,
+        HashSet<string> domains,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogDebug("Downloading {Url}", url);
+        using var response = await _http.GetAsync(
+                url,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken)
+            .ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken)
+            .ConfigureAwait(false);
+        using var reader = new StreamReader(stream);
+        DomainListParser.ParseDomainsInto(reader, domains);
     }
 
     private async Task<string> DownloadTextAsync(string url, CancellationToken cancellationToken)
