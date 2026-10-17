@@ -182,9 +182,49 @@ public class UpdateCheckerTests
         Assert.Contains(result.MsiPath!, launcher.LastArguments);
         Assert.Contains("msiexec.exe", launcher.LastArguments);
         Assert.Contains("taskkill", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
-        // Silent path: kill UI, delay, detach via cmd start /b so StopServices cannot kill msiexec.
+        Assert.Contains("DnsBlocker.UI.exe", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DnsBlocker.Service.exe", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("sc stop DnsBlocker", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        // Silent path: stop service + kill UI/Service, settle, detach via cmd start /b.
         Assert.EndsWith("cmd.exe", launcher.LastFileName, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("start \"DnsBlockerMsi\" /b msiexec.exe", launcher.LastArguments);
     }
+
+    [Fact]
+    public async Task InstallAsync_Interactive_ElevatedPrepStopsServiceBeforeMsiexec()
+    {
+        var msiBytes = Encoding.UTF8.GetBytes("fake-msi-payload");
+        var expectedHash = Convert.ToHexString(SHA256.HashData(msiBytes));
+
+        var mockHttp = new MockHttpMessageHandler();
+        mockHttp.When("https://feed.test/app.msi")
+            .Respond("application/octet-stream", new MemoryStream(msiBytes));
+
+        var files = new MemoryUpdateFileSystem();
+        var launcher = new RecordingProcessLauncher();
+        var installer = new UpdateInstaller(mockHttp.ToHttpClient(), files, launcher, waitForExit: false);
+
+        var result = await installer.InstallAsync(new UpdateManifest
+        {
+            Version = "2.0.0",
+            MsiUrl = "https://feed.test/app.msi",
+            Sha256 = expectedHash
+        }, silent: false);
+
+        Assert.True(result.Started);
+        Assert.EndsWith("cmd.exe", launcher.LastFileName, StringComparison.OrdinalIgnoreCase);
+        Assert.True(launcher.LastUseShellExecute);
+        Assert.Equal("runas", launcher.LastVerb);
+        Assert.Contains("/qb", launcher.LastArguments);
+        Assert.Contains("/norestart", launcher.LastArguments);
+        Assert.Contains("sc stop DnsBlocker", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("taskkill /IM DnsBlocker.UI.exe /F", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("taskkill /IM DnsBlocker.Service.exe /F", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+        // Interactive: msiexec runs in the elevated cmd (not start /b) so /qb UI is visible.
+        Assert.DoesNotContain("start \"DnsBlockerMsi\" /b", launcher.LastArguments);
+        Assert.Contains("msiexec.exe", launcher.LastArguments, StringComparison.OrdinalIgnoreCase);
+    }
+
 
     [Fact]
     public async Task InstallAsync_RejectsBadHash()
@@ -372,12 +412,16 @@ public class UpdateCheckerTests
         public string? LastFileName { get; private set; }
         public string? LastArguments { get; private set; }
         public bool LastWaitForExit { get; private set; }
+        public bool LastUseShellExecute { get; private set; }
+        public string? LastVerb { get; private set; }
 
         public Task<int?> StartAsync(System.Diagnostics.ProcessStartInfo startInfo, bool waitForExit, CancellationToken cancellationToken)
         {
             LastFileName = startInfo.FileName;
             LastArguments = startInfo.Arguments;
             LastWaitForExit = waitForExit;
+            LastUseShellExecute = startInfo.UseShellExecute;
+            LastVerb = startInfo.Verb;
             return Task.FromResult<int?>(waitForExit ? 0 : null);
         }
     }

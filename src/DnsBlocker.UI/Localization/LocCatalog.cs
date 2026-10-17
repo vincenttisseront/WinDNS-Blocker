@@ -160,10 +160,14 @@ internal static class LocCatalog
         ["Sync.Progress.Merge"] = ("Sync: merge/whitelist — {0} domains (wl {1})", "Sync : fusion/whitelist — {0} domaines (wl {1})"),
         ["Sync.Progress.Store"] = ("Sync: storing {0} domains in SQLite", "Sync : enregistrement de {0} domaines dans SQLite"),
         ["Sync.Progress.Chunk"] = ("Sync: prepared {0} domains → {1} QRP policies", "Sync : préparé {0} domaines → {1} politiques QRP"),
+        ["Sync.Progress.Classify"] = ("Sync: classifying {0} target(s) (empty vs populated)…", "Sync : classification de {0} cible(s) (vide vs peuplée)…"),
+        ["Sync.Progress.Prioritize"] = ("Sync: priority plan — apply {0}/{1} — {2}", "Sync : plan de priorité — apply {0}/{1} — {2}"),
         ["Sync.Progress.ApplyTarget"] = ("Sync: applying QRP on {0} ({1} policies)…", "Sync : application QRP sur {0} ({1} politiques)…"),
+        ["Sync.Progress.ApplyTargetWhy"] = ("Sync: applying QRP on {0} ({1} policies) — {2}", "Sync : application QRP sur {0} ({1} politiques) — {2}"),
         ["Sync.Progress.ApplyProgress"] = ("Sync: {0} — policies {1}/{2}", "Sync : {0} — politiques {1}/{2}"),
         ["Sync.Progress.ApplyDoneOk"] = ("Sync: {0} — apply OK ({1} policies)", "Sync : {0} — apply OK ({1} politiques)"),
         ["Sync.Progress.ApplyDoneFail"] = ("Sync: {0} — apply FAIL — {1}", "Sync : {0} — apply ÉCHEC — {1}"),
+        ["Sync.Progress.DeferTarget"] = ("Sync: deferring {0} (live={1}) — {2}", "Sync : report de {0} (live={1}) — {2}"),
         ["Sync.Progress.Verify"] = ("Sync: verifying QRP policies on targets…", "Sync : vérification des politiques QRP sur les cibles…"),
         ["Sync.Progress.BlockTest"] = ("Sync: block test {0} @ {1}…", "Sync : test de blocage {0} @ {1}…"),
         ["Sync.Progress.DoneOk"] = ("Sync: done — {0} domains / {1} target(s) OK", "Sync : terminé — {0} domaines / {1} cible(s) OK"),
@@ -223,10 +227,12 @@ internal static class LocCatalog
         ["Main.ServiceTitle"] = ("DnsBlocker service", "Service DnsBlocker"),
         ["Main.Journal.ApplyNow"] = ("Action: Update now (sync)", "Action : Mettre à jour maintenant (sync)"),
         ["Main.Sync.Ok"] = ("Sync OK — {0} domains / {1} server(s)", "Sync OK — {0} domaines / {1} serveur(s)"),
+        ["Main.Sync.OkIncremental"] = ("Sync OK — {0} domains / {1} applied, {2} deferred (incremental)", "Sync OK — {0} domaines / {1} appliqué(s), {2} reporté(s) (au fil de l'eau)"),
         ["Main.Sync.Partial"] = ("Partial sync — {0} OK, {1} failed", "Sync partielle — {0} OK, {1} échec(s)"),
         ["Main.Sync.Fail"] = ("Sync failed: {0}", "Sync en échec : {0}"),
         ["Main.Sync.SeeDetails"] = ("see details", "voir détails"),
         ["Main.Sync.TargetOk"] = ("  target {0} — OK ({1} policies)", "  cible {0} — OK ({1} politiques)"),
+        ["Main.Sync.TargetDeferred"] = ("  target {0} — deferred: {1}", "  cible {0} — reportée : {1}"),
         ["Main.Sync.TargetFail"] = ("  target {0} — FAILED: {1}", "  cible {0} — ÉCHEC : {1}"),
         ["Main.Sync.AlreadyRunning"] = ("A sync is already in progress.", "Une synchronisation est déjà en cours."),
         ["Main.Sync.Cancelled"] = ("Sync cancelled.", "Sync annulée."),
@@ -286,6 +292,22 @@ internal static class LocCatalog
         ["Main.Update.Prompt"] = ("A new version ({0}) is available.{1}\n\nInstall now?", "Une nouvelle version ({0}) est disponible.{1}\n\nInstaller maintenant ?"),
         ["Main.Update.Title"] = ("WinDNS Blocker update", "Mise à jour WinDNS Blocker"),
         ["Main.Update.Installing"] = ("Update: installing…", "Mise à jour : installation en cours…"),
+        ["Main.Update.ClosingForUpgrade"] = (
+            "WinDNS Blocker will close so the installer can replace files.\n\n" +
+            "Any running sync and the DnsBlocker Windows service will be stopped automatically.\n\n" +
+            "Click OK to continue (UAC may prompt).",
+            "WinDNS Blocker va se fermer pour que l'installateur puisse remplacer les fichiers.\n\n" +
+            "Toute sync en cours et le service Windows DnsBlocker seront arrêtés automatiquement.\n\n" +
+            "Cliquez sur OK pour continuer (UAC peut s'afficher)."),
+        ["Main.Update.PreparingShutdown"] = (
+            "Update: stopping service and closing…",
+            "Mise à jour : arrêt du service et fermeture…"),
+        ["Main.Journal.PreparingShutdown"] = (
+            "Update — stopping service / UI before msiexec",
+            "Mise à jour — arrêt service / UI avant msiexec"),
+        ["Main.Update.LaunchMsiexecFail"] = (
+            "Could not launch the installer.",
+            "Impossible de lancer l'installateur."),
         ["Main.Journal.InstallUpdate"] = ("Action: Install update {0}", "Action : Installer mise à jour {0}"),
         ["Main.Update.MsiexecStarted"] = ("Update: msiexec started (service may restart)", "Mise à jour : msiexec démarré (le service peut redémarrer)"),
         ["Main.Journal.InstallStarted"] = ("Update install — msiexec started", "Installation mise à jour — msiexec démarré"),

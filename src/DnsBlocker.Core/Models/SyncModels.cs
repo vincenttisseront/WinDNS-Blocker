@@ -7,7 +7,11 @@ public enum TargetSyncStatus
     Idle,
     InProgress,
     Succeeded,
-    Failed
+    Failed,
+    /// <summary>
+    /// Already had policies; deferred this run so sync stays short (incremental / au fil de l'eau).
+    /// </summary>
+    Skipped
 }
 
 public sealed class TargetSyncResult
@@ -32,8 +36,23 @@ public sealed class SyncRunResult
     public int SourceListCount { get; set; }
     public List<TargetSyncResult> Targets { get; init; } = [];
     public string? Error { get; set; }
-    public bool Success => Error is null && Targets.Count > 0 && Targets.All(t => t.Status == TargetSyncStatus.Succeeded);
-    public bool PartialSuccess => Targets.Any(t => t.Status == TargetSyncStatus.Succeeded) && Targets.Any(t => t.Status == TargetSyncStatus.Failed);
+
+    /// <summary>
+    /// True when every target either succeeded or was intentionally deferred (Skipped).
+    /// Skipped does not fail the run — those hosts keep their prior list until a later pass.
+    /// </summary>
+    public bool Success =>
+        Error is null
+        && Targets.Count > 0
+        && Targets.All(t => t.Status is TargetSyncStatus.Succeeded or TargetSyncStatus.Skipped)
+        && Targets.Any(t => t.Status == TargetSyncStatus.Succeeded);
+
+    public bool PartialSuccess =>
+        Targets.Any(t => t.Status == TargetSyncStatus.Succeeded)
+        && Targets.Any(t => t.Status == TargetSyncStatus.Failed);
+
+    public int AppliedCount => Targets.Count(t => t.Status == TargetSyncStatus.Succeeded);
+    public int DeferredCount => Targets.Count(t => t.Status == TargetSyncStatus.Skipped);
 }
 
 public sealed class ServiceStatus

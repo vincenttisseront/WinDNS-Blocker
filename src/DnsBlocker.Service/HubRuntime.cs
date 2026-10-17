@@ -118,9 +118,12 @@ public sealed class HubRuntime
                 .ConfigureAwait(false);
             foreach (var t in result.Targets)
             {
-                _logs.Write(t.Status == TargetSyncStatus.Succeeded
-                    ? $"Target OK: {t.Target} ({t.PolicyCount} policies)"
-                    : $"Target FAIL: {t.Target} — {t.Error}");
+                _logs.Write(t.Status switch
+                {
+                    TargetSyncStatus.Succeeded => $"Target OK: {t.Target} ({t.PolicyCount} policies)",
+                    TargetSyncStatus.Skipped => $"Target DEFERRED: {t.Target} — {t.Error}",
+                    _ => $"Target FAIL: {t.Target} — {t.Error}"
+                });
             }
 
             // Succeeded ≠ live Enabled policies — always probe Get-DnsServerQueryResolutionPolicy after sync.
@@ -593,9 +596,9 @@ public sealed class HubRuntime
 
     /// <summary>
     /// Installs an update via msiexec. Prefer silent=true when called from the service
-    /// (already LocalSystem). Do not stop the service manually — the MSI ServiceControl
-    /// table should stop/restart DnsBlocker during the upgrade.
-    /// Never kills the host process after starting msiexec; failures return <see cref="UpdateInstallResult"/>.
+    /// (already LocalSystem). The installer prep script stops/kills DnsBlocker (service + UI)
+    /// before msiexec so an active sync cannot hold file locks; MSI ServiceControl remains a backup.
+    /// Never kills the host process from this method; failures return <see cref="UpdateInstallResult"/>.
     /// </summary>
     public async Task<UpdateInstallResult> InstallUpdateAsync(
         UpdateManifest? manifest = null,
@@ -620,10 +623,17 @@ public sealed class HubRuntime
                 manifest = check.Manifest;
             }
 
+            if (_syncEngine.IsSyncing)
+            {
+                _logs.Write(
+                    "InstallUpdate: sync still running — prep will stop/kill DnsBlocker before msiexec " +
+                    "(avoids file locks / stuck InstallFiles)");
+            }
+
             _logs.Write($"Starting MSI update {manifest.Version} (silent={silent})");
             var result = await _updateInstaller.InstallAsync(manifest, silent, cancellationToken).ConfigureAwait(false);
             if (result.Started)
-                _logs.Write($"msiexec started for {manifest.Version} — service may stop via MSI ServiceControl; host process not terminated");
+                _logs.Write($"msiexec prep launched for {manifest.Version} — service/UI will stop before InstallFiles");
             else
                 _logs.Write($"Update install failed: {result.Error}");
             return result;
@@ -821,6 +831,9 @@ public sealed class HubRuntime
         config.ChunkSize = Math.Clamp(config.ChunkSize, 1, 200);
         // Cap at 2 — never fan out farm-wide in parallel on a DC hub.
         config.MaxParallelTargets = Math.Clamp(config.MaxParallelTargets, 1, 2);
+        // 0 = unlimited populated fan-out; otherwise cap so multi-DC farms stay responsive.
+        if (config.MaxPopulatedTargetsPerSync < 0)
+            config.MaxPopulatedTargetsPerSync = 0;
         config.ScheduledHour = Math.Clamp(config.ScheduledHour, 0, 23);
         config.ScheduledMinute = Math.Clamp(config.ScheduledMinute, 0, 59);
         if (string.IsNullOrWhiteSpace(config.PolicyNamePrefix))
@@ -858,6 +871,7 @@ public sealed class HubRuntime
         PolicyApplyThrottleMs = c.PolicyApplyThrottleMs,
         PolicyApplyGcEvery = c.PolicyApplyGcEvery,
         MaxParallelTargets = c.MaxParallelTargets,
+        MaxPopulatedTargetsPerSync = c.MaxPopulatedTargetsPerSync,
         RestartDnsAfterPolicySync = c.RestartDnsAfterPolicySync,
         ScheduledHour = c.ScheduledHour,
         ScheduledMinute = c.ScheduledMinute,
