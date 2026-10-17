@@ -168,13 +168,16 @@ msiexec /i DnsBlocker-1.0.11.msi /l*v $env:TEMP\dnsblocker-install.log
 3. Or manual:
 ```cmd
 wmic product where "Name like 'WinDNS Blocker%%'" call uninstall
-msiexec /x {E0CA6415-35DC-5408-8EAC-AC670C017A39} /qn
-msiexec /x {C0E48BDA-FEEB-58EA-AA60-D8D8D6A5D322} /qn
+msiexec /x {868B963E-5A3E-508F-9667-3C1EA232098D} /qn
+msiexec /x {60726742-C306-5F22-B988-CC3CB3A4AC43} /qn
 del /f /q "%ProgramData%\Microsoft\Windows\Start Menu\Programs\WinDNS Blocker\*.*"
-msiexec /i "%USERPROFILE%\Downloads\DnsBlocker-1.0.20.msi" /qb
+rd /s /q "%ProgramFiles%\DnsBlocker"
+msiexec /i "%USERPROFILE%\Downloads\DnsBlocker-1.0.22.msi" /qb
 ```
 
-If `UI\DnsBlocker.UI.exe` still exists, `Repair-DnsBlocker.cmd` opens Setup; if missing it forwards to `Recover-DnsBlocker.cmd`.
+ProductCodes: 1.0.20=`{868B963E-…098D}`, 1.0.21=`{60726742-…AC43}`, 1.0.22=`{6AEED747-…5C2C}`.
+
+If `UI\DnsBlocker.UI.exe` still exists, `Repair-DnsBlocker.cmd` opens Setup; if missing (or version stuck) use `Recover-DnsBlocker.cmd`.
 
 Server requirement: **Windows Server with Desktop Experience** (WPF UI). Server Core cannot host the UI.
 
