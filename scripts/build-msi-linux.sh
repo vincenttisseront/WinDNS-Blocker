@@ -109,26 +109,16 @@ component_ids: list[str] = []
 service_exe_cid = service_exe_fid = None
 ui_exe_fid = None
 
-# File.Version is REQUIRED for late RemoveExistingProducts + stable Component GUIDs.
-# Unversioned keypaths that already exist are skipped by InstallFiles → ARP shows new
-# ProductVersion while DnsBlocker.UI.exe stays on the old bits (Vincent: UI still 1.0.20).
-file_ver = version if version.count(".") >= 3 else f"{version}.0"
-
-def file_version_attr(path: Path) -> str:
-    ext = path.suffix.lower()
-    if ext in (".exe", ".dll"):
-        return f' Version="{file_ver}"'
-    return ""
-
+# Note: wixl ignores File/@Version. We stamp File.Version post-build with msibuild
+# (required for late RemoveExistingProducts + stable Component GUIDs — see patch step).
 for p in all_files:
     rel = p.relative_to(root_files)
     did = dir_ids[rel.parent]
     cid = "c" + hashlib.sha1(rel.as_posix().encode()).hexdigest()[:16]
     fid = "f" + hashlib.sha1(rel.as_posix().encode()).hexdigest()[:16]
     component_ids.append(cid)
-    ver_attr = file_version_attr(p)
     body = f'''      <Component Id="{cid}" Guid="{gid(rel.as_posix())}">
-        <File Id="{fid}" Source="{xml_escape(str(p))}" KeyPath="yes"{ver_attr} />
+        <File Id="{fid}" Source="{xml_escape(str(p))}" KeyPath="yes" />
 '''
     if rel.as_posix().lower() == "dnsblocker.service.exe":
         service_exe_cid, service_exe_fid = cid, fid
@@ -267,6 +257,40 @@ PY
 echo "==> Compiling MSI with wixl"
 # wixl: -a x64 for 64-bit
 wixl -v -a x64 -o "$MSI" "$WXS"
+
+# wixl ignores File/@Version. Stamp PE File.Version so late RemoveExistingProducts
+# upgrades actually replace existing UI.exe/Service.exe (shared Component GUIDs).
+echo "==> Stamping File.Version on PE files (msibuild)"
+command -v msibuild >/dev/null || { echo "msibuild required (msitools)"; exit 1; }
+FILE_VER="$VERSION"
+[[ "$FILE_VER" == *.*.*.* ]] || FILE_VER="${FILE_VER}.0"
+PATCH_DIR=$(mktemp -d)
+msidump -d "$PATCH_DIR" -t "$MSI" >/dev/null
+python3 - "$PATCH_DIR/File.idt" "$FILE_VER" <<'PY'
+import sys
+from pathlib import Path
+path, ver = Path(sys.argv[1]), sys.argv[2]
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+out = []
+for i, line in enumerate(lines):
+    if i < 3 or not line.strip():
+        out.append(line)
+        continue
+    cols = line.rstrip("\r\n").split("\t")
+    # File Component_ FileName FileSize Version Language Attributes Sequence
+    if len(cols) >= 8:
+        name = cols[2]
+        if name.lower().endswith((".exe", ".dll")):
+            cols[4] = ver
+        out.append("\t".join(cols) + "\r\n")
+    else:
+        out.append(line if line.endswith("\n") else line + "\n")
+path.write_text("".join(out), encoding="utf-8")
+print(f"Stamped File.Version={ver} on PE rows in {path}")
+PY
+msibuild "$MSI" -i "$PATCH_DIR/File.idt"
+rm -rf "$PATCH_DIR"
+echo "OK: File.Version stamped to $FILE_VER"
 
 # Verify Icon table + UI exe icon landed in the package
 echo "==> Verifying MSI icon wiring"
