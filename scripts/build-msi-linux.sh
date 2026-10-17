@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "Fix stuck UI version: stamp File.Version so late-REP upgrades replace UI.exe/Service.exe. CA 242 + late REP retained.",
+  "releaseNotes": "Status tab green empty block + Verify/Test CTAs (PR #21). File.Version stamp + CA 242 + late REP retained.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
