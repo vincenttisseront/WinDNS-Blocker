@@ -32,7 +32,7 @@
   <sys:String x:Key="Btn.PrepareTargetAction">Prepare target</sys:String>
   <sys:String x:Key="Btn.TestWinRm">Test WinRM / CIM</sys:String>
   <sys:String x:Key="Btn.PrepareFirst">Prepare first…</sys:String>
-  <sys:String x:Key="Btn.CopyLogs">Copy</sys:String>
+  <sys:String x:Key="Btn.CopyLogs">Copy logs</sys:String>
   <sys:String x:Key="Tab.Status">Status</sys:String>
   <sys:String x:Key="Tab.Configuration">Configuration</sys:String>
   <sys:String x:Key="Tab.Domains">Domains</sys:String>

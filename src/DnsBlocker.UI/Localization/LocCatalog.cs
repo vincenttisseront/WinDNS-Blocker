@@ -36,7 +36,7 @@ internal static class LocCatalog
         ["Btn.PrepareTargetAction"] = ("Prepare target", "Préparer la cible"),
         ["Btn.TestWinRm"] = ("Test WinRM / CIM", "Tester WinRM / CIM"),
         ["Btn.PrepareFirst"] = ("Prepare first…", "Préparer d'abord…"),
-        ["Btn.CopyLogs"] = ("Copy", "Copier"),
+        ["Btn.CopyLogs"] = ("Copy logs", "Copier les logs"),
         ["Tab.Status"] = ("Status", "Statut"),
         ["Tab.Configuration"] = ("Configuration", "Configuration"),
         ["Tab.Domains"] = ("Domains", "Domaines"),
