@@ -40,10 +40,20 @@ public static class SetupWizardGate
         if (targets.All(IsLocalOnlyTarget))
             return true;
 
-        if (string.IsNullOrWhiteSpace(config.BlocklistsUrl))
+        // Curated-lists-only (empty Steve Jenkins LoL URL) is a valid DC-friendly config.
+        if (string.IsNullOrWhiteSpace(config.BlocklistsUrl) && !HasAnyBlocklistSource(config))
             return true;
 
         return false;
+    }
+
+    /// <summary>True when curated toggles or custom ExtraBlocklistUrls supply at least one source.</summary>
+    public static bool HasAnyBlocklistSource(AppConfig config)
+    {
+        if (config.CuratedYoutubeAds || config.CuratedOisdBig || config.CuratedOisdNsfw || config.CuratedChadmayfieldPorn)
+            return true;
+        return config.ExtraBlocklistUrls is { Count: > 0 }
+               && config.ExtraBlocklistUrls.Any(u => !string.IsNullOrWhiteSpace(u));
     }
 
     public static bool IsLocalOnlyTarget(string target)

@@ -44,15 +44,22 @@ public sealed class SyncEngine
 
         IsSyncing = true;
         var result = new SyncRunResult { StartedAt = DateTimeOffset.UtcNow };
+        // Yield CPU to DNS/AD on domain controllers during multi-million ingest + QRP push.
+        using var priority = ProcessMemory.EnterBelowNormalPriority();
         try
         {
-            _logger.LogInformation("Starting blocklist sync (RSS {Rss})", ProcessMemory.FormatWorkingSet());
+            _logger.LogInformation(
+                "Starting blocklist sync (priority BelowNormal, maxDomains={Max}, RSS {Rss})",
+                config.MaxDomains <= 0 ? "unlimited" : config.MaxDomains.ToString(),
+                ProcessMemory.FormatWorkingSet());
+
             var ingest = await _ingestor.IngestAsync(
                 config.BlocklistsUrl,
                 config.WhitelistsUrl,
                 CuratedBlocklists.ResolveExtraBlocklistUrls(config),
                 config.ExtraWhitelistUrls,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                config.MaxDomains).ConfigureAwait(false);
 
             result.WhitelistCount = ingest.WhitelistCount;
             result.SourceListCount = ingest.SourceListCount;
@@ -60,10 +67,12 @@ public sealed class SyncEngine
             if (ingest.Errors.Count > 0)
                 _logger.LogWarning("Ingest completed with {Count} source errors", ingest.Errors.Count);
 
-            // Own the single HashSet — apex + compact in place (no second/third 6M copies).
+            // Own the single HashSet — apex + compact in place (no second/third multi-M copies).
             var domains = ingest.Domains;
             var ingestedCount = domains.Count;
             DomainListParser.PrepareForQrpInPlace(domains);
+            if (config.MaxDomains > 0 && domains.Count > config.MaxDomains)
+                DomainListParser.EnforceMaxDomains(domains, config.MaxDomains);
             result.DomainCount = domains.Count;
             _logger.LogInformation(
                 "Prepared QRP set: ingested={Ingested} → prepared={Prepared} (RSS {Rss})",
@@ -78,9 +87,10 @@ public sealed class SyncEngine
                 Math.Max(1, config.ChunkSize));
             var expectedPolicies = PowerShellDnsPolicyProvider.CountExpectedPolicies(chunks);
 
-            // Chunks hold string refs; drop the HashSet shell so GC can reclaim bucket arrays.
+            // Chunks hold string refs; drop the HashSet shell + buckets so GC can reclaim.
             domains.Clear();
-            ProcessMemory.TrimAfterLargeDrop();
+            domains.TrimExcess();
+            ProcessMemory.TrimAfterLargeDrop(blocking: true);
 
             _logger.LogInformation(
                 "QRP chunks={Chunks} expectedPolicies={Expected} (max {MaxPerChunk}/policy, budget {Budget} chars, RSS {Rss})",
@@ -117,6 +127,8 @@ public sealed class SyncEngine
 
             // Default 1 — parallel apply doubles PowerShell + manifest RSS on the DC.
             using var gate = new SemaphoreSlim(Math.Max(1, config.MaxParallelTargets));
+            var throttleMs = Math.Max(0, config.PolicyApplyThrottleMs);
+            var gcEvery = Math.Max(0, config.PolicyApplyGcEvery);
             var tasks = result.Targets.Select(async targetResult =>
             {
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -133,7 +145,9 @@ public sealed class SyncEngine
                         config.PolicyAction,
                         chunks,
                         cancellationToken,
-                        config.RestartDnsAfterPolicySync).ConfigureAwait(false);
+                        config.RestartDnsAfterPolicySync,
+                        throttleMs,
+                        gcEvery).ConfigureAwait(false);
 
                     targetResult.Status = TargetSyncStatus.Succeeded;
                     targetResult.PolicyCount = expectedPolicies;
@@ -153,12 +167,18 @@ public sealed class SyncEngine
                     sw.Stop();
                     targetResult.Duration = sw.Elapsed;
                     targetResult.FinishedAt = DateTimeOffset.UtcNow;
-                    ProcessMemory.TrimAfterLargeDrop();
+                    ProcessMemory.TrimAfterLargeDrop(blocking: true);
                     gate.Release();
                 }
             });
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            // Drop chunk lists so domain strings are eligible for GC (manifest already on disk during apply).
+            if (chunks is List<IReadOnlyList<string>> mutable)
+                mutable.Clear();
+            ProcessMemory.TrimAfterLargeDrop(blocking: true);
+
             result.FinishedAt = DateTimeOffset.UtcNow;
             _state.SaveSyncResult(result);
             _logger.LogInformation("Sync finished (RSS {Rss})", ProcessMemory.FormatWorkingSet());

@@ -51,7 +51,7 @@
   <sys:String x:Key="Status.LivePoliciesTitle">Installed QRP policies (live Get-DnsServerQueryResolutionPolicy probe)</sys:String>
   <sys:String x:Key="Status.NoProbeYet">No probe yet — runs automatically after sync, or click « Verify QRP policies ».</sys:String>
   <sys:String x:Key="Status.BlockTestTitle">Test blocking (nslookup against DNS target)</sys:String>
-  <sys:String x:Key="Status.BlockTestHint">Enter a blocklisted domain (e.g. beeg.com). Expect REFUSED / timeout / NXDOMAIN — not Cloudflare IPs. Client DNS must be this server only (no DoH).</sys:String>
+  <sys:String x:Key="Status.BlockTestHint">Enter a blocklisted domain (e.g. beeg.com). Run the test against each farm target (e.g. windc04 and windc05). IGNORE = drop → nslookup timeout; DENY = REFUSED (clients may fail over to another DNS). Firefox may still load the site via DoH — turn off DNS over HTTPS (Settings → Privacy → Enable DNS over HTTPS OFF, or about:config network.trr.mode=5). Prefer nslookup - server TARGET beeg.com over the browser.</sys:String>
   <sys:String x:Key="Status.Col.Applied">Applied</sys:String>
   <sys:String x:Key="Status.Col.Installed">Installed</sys:String>
   <sys:String x:Key="Status.Col.Enabled">Enabled</sys:String>
@@ -60,7 +60,10 @@
   <sys:String x:Key="Status.ActionLog">Action log (Status)</sys:String>
   <sys:String x:Key="Cfg.SourcesTitle">List sources</sys:String>
   <sys:String x:Key="Cfg.BlocklistsUrl">blocklists.txt URL (list of lists)</sys:String>
+  <sys:String x:Key="Cfg.BlocklistsUrlHint">Leave empty for curated-lists-only (recommended on DCs — OISD wildcards). Paste the Steve Jenkins LoL URL only if you need multi-million host dumps (hits Max domains).</sys:String>
   <sys:String x:Key="Cfg.WhitelistsUrl">whitelists.txt URL</sys:String>
+  <sys:String x:Key="Cfg.MaxDomains">Max domains (0 = unlimited)</sys:String>
+  <sys:String x:Key="Cfg.MaxDomainsHint">Default 400000 keeps DnsBlocker.Service under ~300 MB on a DC. Curated OISD alone is usually well below this.</sys:String>
   <sys:String x:Key="Cfg.RegexUrl">regex.txt (not supported by Windows DNS QRP — informational)</sys:String>
   <sys:String x:Key="Cfg.CuratedTitle">Extra lists (curated)</sys:String>
   <sys:String x:Key="Cfg.CuratedHint">Re-fetched on every daily sync (hour below) and via « Update now ».</sys:String>

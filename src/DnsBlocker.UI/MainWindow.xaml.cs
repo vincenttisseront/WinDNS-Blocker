@@ -628,6 +628,8 @@ public partial class MainWindow : Window
         cfg.PolicyAction = (ActionBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "DENY";
         if (int.TryParse(ChunkSizeBox.Text, out var chunk))
             cfg.ChunkSize = chunk;
+        if (int.TryParse(MaxDomainsBox.Text, out var maxDomains) && maxDomains >= 0)
+            cfg.MaxDomains = maxDomains;
         if (int.TryParse(ParallelBox.Text, out var parallel))
             cfg.MaxParallelTargets = parallel;
         if (int.TryParse(HourBox.Text, out var hour))
@@ -1207,6 +1209,7 @@ public partial class MainWindow : Window
         CuratedChadmayfieldCheck.IsChecked = cfg.CuratedChadmayfieldPorn;
         ExtraBlocklistUrlsBox.Text = string.Join(Environment.NewLine, cfg.ExtraBlocklistUrls);
         ChunkSizeBox.Text = cfg.ChunkSize.ToString();
+        MaxDomainsBox.Text = cfg.MaxDomains.ToString();
         ParallelBox.Text = cfg.MaxParallelTargets.ToString();
         HourBox.Text = cfg.ScheduledHour.ToString();
         MinuteBox.Text = cfg.ScheduledMinute.ToString();

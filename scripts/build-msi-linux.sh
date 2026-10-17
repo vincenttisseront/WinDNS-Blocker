@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.25: fix hosts-file 0.0.0.0.domain QRP pollution (Vincent windc04); stream ingest + lower sync RSS; full DnsBlocker_* wipe + IGNORE sentinel. File.Version stamp + CA 242 + late REP retained.",
+  "releaseNotes": "1.0.26: sync resource cap for DCs — MaxDomains 400k, curated-lists-only default, BelowNormal priority, NDJSON streamed QRP apply + GC throttle; Status tip Firefox DoH OFF / IGNORE=timeout vs DENY=REFUSED. Builds on 1.0.25 hosts parse + RSS.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

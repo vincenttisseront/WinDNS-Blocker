@@ -6,6 +6,8 @@ public interface IDnsPolicyProvider
     /// Replaces all policies with the given prefix on the target with the provided domain chunks.
     /// Implementations should verify live Enabled count after apply; <paramref name="restartDnsAfterApply"/>
     /// restarts the Windows DNS Server service so new FQDN criteria enter the query path.
+    /// <paramref name="applyThrottleMs"/> / <paramref name="applyGcEvery"/> throttle PowerShell/CIM
+    /// Adds on domain controllers (sleep + GC every N policies).
     /// </summary>
     Task ApplyPoliciesAsync(
         string computerName,
@@ -13,7 +15,9 @@ public interface IDnsPolicyProvider
         string action,
         IReadOnlyList<IReadOnlyList<string>> chunks,
         CancellationToken cancellationToken = default,
-        bool restartDnsAfterApply = true);
+        bool restartDnsAfterApply = true,
+        int applyThrottleMs = 15,
+        int applyGcEvery = 25);
 
     Task<IReadOnlyList<string>> ListPolicyNamesAsync(
         string computerName,

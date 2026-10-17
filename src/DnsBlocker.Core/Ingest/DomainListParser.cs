@@ -62,15 +62,24 @@ public static partial class DomainListParser
 
     /// <summary>
     /// Stream parse into an existing set — avoids holding the full download string + a second HashSet.
+    /// When <paramref name="maxDomains"/> &gt; 0, stops once the set reaches that size (DC RSS cap).
     /// </summary>
-    public static void ParseDomainsInto(TextReader reader, HashSet<string> domains)
+    /// <returns>True if the cap was hit and remaining lines were skipped.</returns>
+    public static bool ParseDomainsInto(TextReader reader, HashSet<string> domains, int maxDomains = 0)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(domains);
 
+        var capped = false;
         string? raw;
         while ((raw = reader.ReadLine()) is not null)
         {
+            if (maxDomains > 0 && domains.Count >= maxDomains)
+            {
+                capped = true;
+                break;
+            }
+
             // Normalize NBSP / odd whitespace so "0.0.0.0\u00a0host" still splits as hosts-file.
             var line = raw.Replace('\u00a0', ' ').Replace('\t', ' ').Trim();
             if (line.Length == 0 || line.StartsWith('#') || line.StartsWith('!'))
@@ -115,6 +124,29 @@ public static partial class DomainListParser
             if (TryNormalizeDomain(candidate, out var domain))
                 domains.Add(wildcard ? "*." + domain : domain);
         }
+
+        return capped;
+    }
+
+    /// <summary>
+    /// Trims <paramref name="domains"/> down to <paramref name="maxDomains"/> (stable ordinal order).
+    /// No-op when maxDomains ≤ 0 or already within budget.
+    /// </summary>
+    public static int EnforceMaxDomains(HashSet<string> domains, int maxDomains)
+    {
+        ArgumentNullException.ThrowIfNull(domains);
+        if (maxDomains <= 0 || domains.Count <= maxDomains)
+            return 0;
+
+        var keep = domains
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+            .Take(maxDomains)
+            .ToList();
+        domains.Clear();
+        foreach (var d in keep)
+            domains.Add(d);
+        domains.TrimExcess();
+        return keep.Count;
     }
 
     /// <summary>
