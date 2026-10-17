@@ -102,6 +102,22 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             $computer = '{{EscapePsString(computerName)}}'
             $prefix = '{{EscapePsString(policyNamePrefix)}}'
             $local = {{localLiteral}}
+            function Get-DnsBlockerFqdnLen($policy) {
+              if ($null -eq $policy) { return 0 }
+              $n = 0
+              if ($policy.PSObject.Properties['Fqdn'] -and $policy.Fqdn) {
+                $n = [Math]::Max($n, ([string]$policy.Fqdn).Length)
+              }
+              foreach ($c in @($policy.Criteria)) {
+                if ($null -eq $c) { continue }
+                if ($c.PSObject.Properties['Criteria'] -and $c.Criteria -is [string]) {
+                  $n = [Math]::Max($n, ([string]$c.Criteria).Length)
+                } elseif ($c.PSObject.Properties['Criterion'] -and $c.Criterion) {
+                  $n = [Math]::Max($n, ([string]$c.Criterion).Length)
+                }
+              }
+              return $n
+            }
             if ($local) {
               $rows = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop |
                 Where-Object { $_.Name -like ($prefix + '*') } |
@@ -114,6 +130,7 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
                     Name = $_.Name
                     IsEnabled = $enabled
                     Action = [string]$_.Action
+                    FqdnCriterionLength = (Get-DnsBlockerFqdnLen $_)
                   }
                 })
             } else {
@@ -128,6 +145,7 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
                     Name = $_.Name
                     IsEnabled = $enabled
                     Action = [string]$_.Action
+                    FqdnCriterionLength = (Get-DnsBlockerFqdnLen $_)
                   }
                 })
             }
@@ -455,32 +473,56 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               return $false
             }
 
-            function Test-DnsBlockerHasFqdnCriteria($policy) {
-              # Require non-empty EQ,... content. CriteriaType=Fqdn alone is NOT enough
-              # (Add -PassThru can echo type with empty/inert criterion → no block).
-              if ($null -eq $policy) { return $false }
+            function Get-DnsBlockerFqdnCriterionText($policy) {
+              # MS Get-DnsServerQueryResolutionPolicy: $Policy.Criteria → DnsServerPolicyCriteria
+              # with CriteriaType=Fqdn and Criteria='EQ,...' (property name is Criteria, not Criterion).
+              if ($null -eq $policy) { return '' }
               if ($policy.PSObject.Properties['Fqdn'] -and $policy.Fqdn) {
                 $f = [string]$policy.Fqdn
-                if ($f -match '(?i)^EQ,.+' -and $f.Length -gt 4) { return $true }
+                if ($f -match '(?i)EQ,') { return $f }
               }
-              $criteria = New-Object System.Collections.Generic.List[object]
+              $parts = New-Object System.Collections.Generic.List[string]
+              $bags = New-Object System.Collections.Generic.List[object]
               if ($null -ne $policy.Criteria) {
-                foreach ($c in @($policy.Criteria)) { [void]$criteria.Add($c) }
+                foreach ($c in @($policy.Criteria)) { [void]$bags.Add($c) }
               }
-              if ($null -ne $policy.Content -and $policy.Content.PSObject.Properties['Criteria'] -and $policy.Content.Criteria) {
-                foreach ($c in @($policy.Content.Criteria)) { [void]$criteria.Add($c) }
+              if ($null -ne $policy.Content) {
+                foreach ($contentItem in @($policy.Content)) {
+                  if ($null -ne $contentItem -and $contentItem.PSObject.Properties['Criteria'] -and $contentItem.Criteria) {
+                    foreach ($c in @($contentItem.Criteria)) { [void]$bags.Add($c) }
+                  }
+                }
               }
-              foreach ($c in $criteria) {
-                $content = ''
-                if ($c.PSObject.Properties['Criterion'] -and $c.Criterion) { $content = [string]$c.Criterion }
-                elseif ($c.PSObject.Properties['Content'] -and $c.Content) { $content = [string]$c.Content }
-                elseif ($c.PSObject.Properties['Criteria'] -and $c.Criteria) { $content = [string]$c.Criteria }
-                if ($content -match '(?i)EQ,.+' -and $content.Length -gt 4) { return $true }
+              foreach ($c in $bags) {
+                if ($null -eq $c) { continue }
+                $type = ''
+                if ($c.PSObject.Properties['CriteriaType'] -and $c.CriteriaType) { $type = [string]$c.CriteriaType }
+                elseif ($c.PSObject.Properties['Type'] -and $c.Type) { $type = [string]$c.Type }
+                $text = ''
+                # Prefer MS property name Criteria (string), then Criterion / Content fallbacks.
+                if ($c.PSObject.Properties['Criteria'] -and $c.Criteria -and $c.Criteria -is [string]) {
+                  $text = [string]$c.Criteria
+                } elseif ($c.PSObject.Properties['Criterion'] -and $c.Criterion) {
+                  $text = [string]$c.Criterion
+                } elseif ($c.PSObject.Properties['Content'] -and $c.Content -and $c.Content -is [string]) {
+                  $text = [string]$c.Content
+                }
+                if ($text.Length -eq 0) { continue }
+                if ($type -match '(?i)Fqdn' -or $text -match '(?i)EQ,') {
+                  [void]$parts.Add($text)
+                }
               }
-              return $false
+              return (($parts | Select-Object -Unique) -join '|')
+            }
+
+            function Test-DnsBlockerHasFqdnCriteria($policy) {
+              $text = Get-DnsBlockerFqdnCriterionText $policy
+              return ($text -match '(?i)EQ,.+' -and $text.Length -gt 4)
             }
 
             function Remove-DnsBlockerPolicies([string]$Computer, [string]$Prefix, [bool]$Local) {
+              # Full replace: wipe EVERY Name -like 'DnsBlocker_*' (D4 DnsBlocker_0001, D5 DnsBlocker_00001,
+              # DnsBlocker_Probe_Beeg, etc.) before recreating with IGNORE + short criteria.
               $existing = @()
               try {
                 if ($Local) {
@@ -495,6 +537,7 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               } catch {
                 $existing = @()
               }
+              $removed = 0
               foreach ($p in $existing) {
                 try {
                   if ($Local) {
@@ -502,6 +545,7 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
                   } else {
                     Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $p.Name -Force -ErrorAction Stop
                   }
+                  $removed++
                 } catch {
                   Start-Sleep -Milliseconds 400
                   if ($Local) {
@@ -509,8 +553,24 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
                   } else {
                     Remove-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $p.Name -Force -ErrorAction Stop
                   }
+                  $removed++
                 }
               }
+              Write-Output ("REMOVED count=$removed prefix=$Prefix*")
+
+              # Must be empty before Add — leftover Deny/inert policies would keep ProcessingOrder noise.
+              if ($Local) {
+                $left = @(Get-DnsServerQueryResolutionPolicy -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -like ($Prefix + '*') })
+              } else {
+                $left = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -like ($Prefix + '*') })
+              }
+              if ($left.Count -gt 0) {
+                $names = ($left | Select-Object -ExpandProperty Name) -join ','
+                throw ("Remove incomplete: " + $left.Count + " " + $Prefix + "* policies remain (" + $names + "). Refusing Add.")
+              }
+              Write-Output 'REMOVED verify=0'
             }
 
             function Add-DnsBlockerPolicy([string]$Computer, [string]$Name, [string]$Action, [string]$Fqdn, [uint32]$Order, [bool]$Local) {
@@ -541,23 +601,47 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               if ($null -ne $created.IsEnabled -and -not [bool]$created.IsEnabled) {
                 if ($Local) {
                   Enable-DnsServerQueryResolutionPolicy -Name $Name -ErrorAction Stop
-                  $created = Get-DnsServerQueryResolutionPolicy -Name $Name -ErrorAction Stop
                 } else {
                   Enable-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -ErrorAction Stop
-                  $created = Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -ErrorAction Stop
                 }
               }
 
-              if (-not (Test-DnsBlockerHasFqdnCriteria $created)) {
-                if ($Local) {
-                  $created = Get-DnsServerQueryResolutionPolicy -Name $Name -ErrorAction Stop
-                } else {
-                  $created = Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -ErrorAction Stop
-                }
-                if (-not (Test-DnsBlockerHasFqdnCriteria $created)) {
-                  throw ("FQDN criteria empty on policy " + $Name + " — Add succeeded but QRP will not block (criteria not persisted).")
+              # Always re-Get after Add (PassThru can omit nested Criteria). Require non-empty EQ,... text.
+              if ($Local) {
+                $created = Get-DnsServerQueryResolutionPolicy -Name $Name -ErrorAction Stop
+              } else {
+                $created = Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -Name $Name -ErrorAction Stop
+              }
+              $critText = Get-DnsBlockerFqdnCriterionText $created
+              if (-not ($critText -match '(?i)EQ,.+') -or $critText.Length -le 4) {
+                $dump = ($created | Format-List * | Out-String)
+                throw ("FQDN criteria empty on policy " + $Name + " (len=" + $critText.Length + ") — Add succeeded but QRP will not block. Dump:`n" + $dump)
+              }
+              # First / sentinel policy: emit readback for journal (Vincent: Get ... | fl *)
+              if ($Order -eq 1) {
+                Write-Output ("CRITERIA_READBACK name=" + $Name + " action=" + [string]$created.Action + " enabled=" + [bool]$created.IsEnabled + " fqdnLen=" + $critText.Length + " fqdnPreview=" + $critText.Substring(0, [Math]::Min(120, $critText.Length)))
+              }
+            }
+
+            function Find-DnsBlockerSmokeInCriteria([string]$Computer, [string]$Prefix, [bool]$Local, [string]$SmokeDomain) {
+              if (-not $SmokeDomain) { return $null }
+              if ($Local) {
+                $rows = @(Get-DnsServerQueryResolutionPolicy -ErrorAction Stop | Where-Object { $_.Name -like ($Prefix + '*') })
+              } else {
+                $rows = @(Get-DnsServerQueryResolutionPolicy -ComputerName $Computer -ErrorAction Stop | Where-Object { $_.Name -like ($Prefix + '*') })
+              }
+              $apex = $SmokeDomain.Trim().Trim('.').ToLowerInvariant()
+              $wild = '*.' + $apex
+              foreach ($p in $rows) {
+                $text = (Get-DnsBlockerFqdnCriterionText $p).ToLowerInvariant()
+                if ($text.Length -eq 0) { continue }
+                # Token match: EQ,beeg.com or ,beeg.com, or ,beeg.com| or ends with ,beeg.com
+                if ($text -match ('(?i)(^|[,|])' + [regex]::Escape($apex) + '([,|]|$)') -or
+                    $text -match ('(?i)(^|[,|])' + [regex]::Escape($wild) + '([,|]|$)')) {
+                  return $p.Name
                 }
               }
+              return $null
             }
 
             function Restart-DnsBlockerDnsServer([string]$Computer, [bool]$Local) {
@@ -644,6 +728,16 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
               }
             }
             Write-Output ("OK added=" + $expected)
+
+            # Prove smoke apex is actually present in persisted FQDN criteria (not just Enabled count).
+            if ($smokeDomain -and $smokeDomain.Length -gt 0) {
+              $hit = Find-DnsBlockerSmokeInCriteria -Computer $computer -Prefix $prefix -Local $local -SmokeDomain $smokeDomain
+              if (-not $hit) {
+                Write-Error ("CRITERIA_SEARCH_FAIL: no " + $prefix + "* policy Criteria contains EQ," + $smokeDomain + " or *." + $smokeDomain + " — Enabled Deny/Ignore policies will not match nslookup (Vincent windc04 repro).")
+                exit 1
+              }
+              Write-Output ("CRITERIA_SEARCH_OK domain=" + $smokeDomain + " policy=" + $hit)
+            }
 
             try {
               if ($local) {

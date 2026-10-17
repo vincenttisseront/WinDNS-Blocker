@@ -62,14 +62,20 @@ public sealed class HubRuntime
         _credentials = credentials;
         _preparedTargets = preparedTargets;
         _config = _configStore.Load();
-        _lastPolicyProbe = TryLoadPersistedProbe();
-        // First-run / scaffold localhost: if this box has DNS Server running, default to local FQDN.
-        if (LocalDnsTarget.TryEnsureDefaultTargets(_config))
+        var priorAction = _config.PolicyAction;
+        Normalize(_config);
+        // Persist IGNORE migration (old installs saved DENY; MS blackhole + Vincent repro need IGNORE).
+        var targetsDefaulted = LocalDnsTarget.TryEnsureDefaultTargets(_config);
+        if (targetsDefaulted
+            || !string.Equals(priorAction, _config.PolicyAction, StringComparison.OrdinalIgnoreCase))
         {
-            Normalize(_config);
             _configStore.Save(_config);
-            _logs.Write($"Local DNS Server detected — DnsTargets defaulted to: {string.Join(", ", _config.DnsTargets)}");
+            if (targetsDefaulted)
+                _logs.Write($"Local DNS Server detected — DnsTargets defaulted to: {string.Join(", ", _config.DnsTargets)}");
+            if (!string.Equals(priorAction, _config.PolicyAction, StringComparison.OrdinalIgnoreCase))
+                _logs.Write($"PolicyAction migrated {priorAction} → {_config.PolicyAction} (blocklist QRP uses IGNORE).");
         }
+        _lastPolicyProbe = TryLoadPersistedProbe();
     }
 
     public AppConfig GetConfig()
@@ -131,13 +137,13 @@ public sealed class HubRuntime
                 if (targetResult is null || targetResult.Status != TargetSyncStatus.Succeeded)
                     continue;
 
-                if (!row.ProbeOk || row.LiveEnabledCount == 0 || !row.AppliedOk)
+                if (!row.ProbeOk || row.LiveEnabledCount == 0 || row.LiveEmptyFqdnCount > 0 || !row.AppliedOk)
                 {
                     targetResult.Status = TargetSyncStatus.Failed;
                     targetResult.Error =
                         $"Post-sync QRP probe: installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, " +
-                        $"sync={row.LastSyncPolicyCount} ({row.AppliedLabel}). " +
-                        "Enabled count must be > 0 and match sync — blocking is not effective.";
+                        $"emptyFqdn={row.LiveEmptyFqdnCount}, sync={row.LastSyncPolicyCount} ({row.AppliedLabel}). " +
+                        "Enabled count must be > 0, FQDN criteria non-empty, and match sync — blocking is not effective.";
                     mutated = true;
                     _logs.Write($"Target FAIL after probe: {row.Target} — {targetResult.Error}");
                     continue;
@@ -234,6 +240,7 @@ public sealed class HubRuntime
                     .ListPoliciesAsync(target, config.PolicyNamePrefix, cancellationToken)
                     .ConfigureAwait(false);
                 var enabled = policies.Count(p => p.IsEnabled);
+                var emptyFqdn = policies.Count(p => p.FqdnCriterionLength <= 0);
                 var row = new TargetPolicyStatus
                 {
                     Target = target,
@@ -244,14 +251,22 @@ public sealed class HubRuntime
                     LastSyncPolicyCount = sync?.PolicyCount ?? 0,
                     LivePolicyCount = policies.Count,
                     LiveEnabledCount = enabled,
+                    LiveEmptyFqdnCount = emptyFqdn,
                     LivePolicyNames = policies.Select(p => p.Name).ToList(),
                     ProbeOk = true,
                     CheckedAt = checkedAt
                 };
                 results.Add(row);
                 _logs.Write(
-                    $"Policy probe OK: {target} — {policies.Count} installée(s), {enabled} activée(s)" +
+                    $"Policy probe OK: {target} — {policies.Count} installée(s), {enabled} activée(s), " +
+                    $"emptyFqdn={emptyFqdn}" +
                     $" (sync: {row.LastSyncStatus}, {row.LastSyncPolicyCount}) → {row.AppliedLabel}");
+                if (emptyFqdn > 0)
+                {
+                    _logs.Write(
+                        $"WARNING: {emptyFqdn} QRP policy(ies) on {target} have empty FQDN criteria " +
+                        "(Enabled≠match — beeg.com can still resolve).");
+                }
             }
             catch (Exception ex)
             {
@@ -778,8 +793,13 @@ public sealed class HubRuntime
         config.ScheduledMinute = Math.Clamp(config.ScheduledMinute, 0, 59);
         if (string.IsNullOrWhiteSpace(config.PolicyNamePrefix))
             config.PolicyNamePrefix = "DnsBlocker_";
-        if (!config.PolicyAction.Equals("IGNORE", StringComparison.OrdinalIgnoreCase))
-            config.PolicyAction = "DENY";
+        // Microsoft blackhole for blocklists is IGNORE (drop). DENY=REFUSED can let stubs
+        // failover; windc04 also had Enabled Deny policies that never matched. Normalize to IGNORE.
+        if (!config.PolicyAction.Equals("IGNORE", StringComparison.OrdinalIgnoreCase)
+            && !config.PolicyAction.Equals("DENY", StringComparison.OrdinalIgnoreCase))
+            config.PolicyAction = "IGNORE";
+        if (config.PolicyAction.Equals("DENY", StringComparison.OrdinalIgnoreCase))
+            config.PolicyAction = "IGNORE";
         config.DnsTargets = config.DnsTargets
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .Select(t => t.Trim())

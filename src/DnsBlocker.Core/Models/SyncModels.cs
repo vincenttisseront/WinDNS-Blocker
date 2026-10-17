@@ -62,22 +62,26 @@ public sealed class TargetPolicyStatus
     public int LastSyncPolicyCount { get; init; }
     public int LivePolicyCount { get; init; }
     public int LiveEnabledCount { get; init; }
+    /// <summary>Policies whose persisted FQDN criterion text length is 0 (inert — will not match).</summary>
+    public int LiveEmptyFqdnCount { get; init; }
     public IReadOnlyList<string> LivePolicyNames { get; init; } = [];
     public bool ProbeOk { get; init; }
     public string? ProbeError { get; init; }
     public DateTimeOffset CheckedAt { get; init; }
 
-    /// <summary>True when probe succeeded, all live policies are enabled, and counts match last sync.</summary>
+    /// <summary>True when probe succeeded, all live policies are enabled with non-empty FQDN criteria, and counts match last sync.</summary>
     public bool AppliedOk =>
         ProbeOk
         && LivePolicyCount > 0
         && LiveEnabledCount == LivePolicyCount
+        && LiveEmptyFqdnCount == 0
         && LastSyncStatus == TargetSyncStatus.Succeeded
         && LivePolicyCount == LastSyncPolicyCount;
 
     public string AppliedLabel =>
         !ProbeOk ? "Sonde en échec"
         : LivePolicyCount == 0 ? "Aucune politique"
+        : LiveEmptyFqdnCount > 0 ? "Critères FQDN vides"
         : LiveEnabledCount < LivePolicyCount ? "Partiellement désactivées"
         : LastSyncStatus == TargetSyncStatus.Succeeded && LivePolicyCount == LastSyncPolicyCount ? "Appliquées"
         : "Écart sync / live";

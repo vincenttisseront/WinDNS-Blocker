@@ -127,6 +127,29 @@ public class PowerShellDnsPolicyProviderTests
     }
 
     [Fact]
+    public void BuildApplyScript_FullReplace_RemovesAllPrefixThenVerifiesZero()
+    {
+        var script = PowerShellDnsPolicyProvider.BuildApplyScript(
+            "localhost",
+            "DnsBlocker_",
+            "IGNORE",
+            [["beeg.com"]],
+            restartDnsAfterApply: false);
+
+        Assert.Contains("Remove-DnsBlockerPolicies", script, StringComparison.Ordinal);
+        Assert.Contains("REMOVED count=", script, StringComparison.Ordinal);
+        Assert.Contains("REMOVED verify=0", script, StringComparison.Ordinal);
+        Assert.Contains("Remove incomplete", script, StringComparison.Ordinal);
+        Assert.Contains("Get-DnsBlockerFqdnCriterionText", script, StringComparison.Ordinal);
+        Assert.Contains("CRITERIA_READBACK", script, StringComparison.Ordinal);
+        Assert.Contains("CRITERIA_SEARCH_OK", script, StringComparison.Ordinal);
+        Assert.Contains("CRITERIA_SEARCH_FAIL", script, StringComparison.Ordinal);
+        Assert.Contains("Find-DnsBlockerSmokeInCriteria", script, StringComparison.Ordinal);
+        // Prefix glob must wipe D4 DnsBlocker_0001 Deny leftovers and Probe_Beeg
+        Assert.Contains("$_.Name -like ($Prefix + '*')", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ValidateApplyOutput_ThrowsOnSmokeSkipWithPolicies()
     {
         var ex = Assert.Throws<InvalidOperationException>(() =>

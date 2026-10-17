@@ -76,7 +76,10 @@ public sealed class MockDnsPolicyProvider : IDnsPolicyProvider
                 {
                     Name = p.Name,
                     IsEnabled = p.IsEnabled,
-                    Action = p.Action
+                    Action = p.Action,
+                    FqdnCriterionLength = p.Domains.Count == 0
+                        ? 0
+                        : ("EQ," + string.Join(",", p.Domains)).Length
                 })
                 .ToList());
     }

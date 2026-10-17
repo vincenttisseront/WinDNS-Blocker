@@ -116,9 +116,25 @@ try {
 
 Write-Host @"
 
+=== Vincent windc04 retest (after manual Probe_Beeg) ===
+If you already ran:
+  Add-DnsServerQueryResolutionPolicy -Name DnsBlocker_Probe_Beeg -Action IGNORE -Fqdn 'EQ,beeg.com' -ProcessingOrder 1 -PassThru
+then prove IGNORE matches apex:
+  Clear-DnsServerCache -Force
+  Resolve-DnsName beeg.com -Server 127.0.0.1 -Type A -ErrorAction SilentlyContinue
+  Resolve-DnsName beeg.com -Server `$env:COMPUTERNAME -Type A -ErrorAction SilentlyContinue
+Expect: timeout / no A  (NOT Cloudflare). If still answers, IGNORE+EQ,beeg.com is ineffective on this build.
+Also inspect criteria on old Deny policies:
+  Get-DnsServerQueryResolutionPolicy -Name DnsBlocker_0001 | Format-List *
+  `$p = Get-DnsServerQueryResolutionPolicy -Name DnsBlocker_0001; `$p.Criteria
+  Get-DnsServerQueryResolutionPolicy | ? Name -like 'DnsBlocker*' | ForEach-Object {
+    `$t = (`$_.Criteria | ForEach-Object { `$_.Criteria }) -join '|'
+    [pscustomobject]@{ Name=`$_.Name; Action=`$_.Action; CritLen=`$t.Length; HasBeeg=(`$t -match 'beeg') }
+  }
+
 Cleanup (optional):
   Remove-DnsServerQueryResolutionPolicy -Name '$Name' -Force
 
-WinDNS Blocker sync must create the same shape (sentinel DnsBlocker_00001 = EQ,beeg.com,*.beeg.com)
-and FAIL the sync if this Resolve still returns Cloudflare IPs.
+WinDNS Blocker 1.0.24 sync: Remove-all DnsBlocker_* first (incl. DnsBlocker_0001 Deny + Probe_Beeg),
+then sentinel DnsBlocker_00001 = EQ,beeg.com,*.beeg.com Action IGNORE; fails sync if Resolve still returns public IPs.
 "@ -ForegroundColor Cyan

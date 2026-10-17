@@ -12,4 +12,9 @@ public sealed class DnsPolicyInfo
 
     /// <summary>DENY, IGNORE, or other QRP action when reported.</summary>
     public string? Action { get; init; }
+
+    /// <summary>
+    /// Length of persisted FQDN criterion text (0 = empty/inert — will not match queries).
+    /// </summary>
+    public int FqdnCriterionLength { get; init; }
 }
