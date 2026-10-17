@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _syncCts;
     private bool _syncRunning;
     private bool _syncDetached;
+    private string? _lastSyncProgressKey;
 
     public MainWindow()
     {
@@ -388,6 +389,7 @@ public partial class MainWindow : Window
                 : Loc.T("Main.Journal.ApplyNow"));
             RefreshLogsView();
 
+            _lastSyncProgressKey = null;
             var applyTask = _client.ApplyNowAsync(_syncCts.Token);
 
             while (!applyTask.IsCompleted)
@@ -456,8 +458,23 @@ public partial class MainWindow : Window
     private async Task CompleteDetachedSyncAsync(Task<SyncRunResult> applyTask, bool fromWizard)
     {
         // Started from the UI thread; ConfigureAwait(true) keeps completions on the dispatcher.
+        // Keep SoftPoll so Action Log / Status header stay live while chrome is hidden.
         try
         {
+            while (!applyTask.IsCompleted)
+            {
+                try
+                {
+                    await Task.Delay(1500).ConfigureAwait(true);
+                }
+                catch
+                {
+                    break;
+                }
+
+                await SoftPollSyncStatusAsync().ConfigureAwait(true);
+            }
+
             SyncRunResult result;
             try
             {
@@ -489,11 +506,38 @@ public partial class MainWindow : Window
         try
         {
             var status = await _client.GetStatusAsync().ConfigureAwait(true);
-            StatusSummary.Text = status.IsSyncing
-                ? Loc.T("Main.Status.Syncing")
-                : Loc.F("Main.Status.ActiveDomains", status.ActiveDomainCount);
-            if (!_syncDetached && _syncRunning)
-                BusyLabel.Text = Loc.T("Main.Busy.Sync");
+            _lastServiceLogs = status.RecentLogs;
+
+            if (status.SyncProgress is { } progress)
+            {
+                var key = progress.Phase + "|" + progress.Message;
+                if (!string.Equals(key, _lastSyncProgressKey, StringComparison.Ordinal))
+                {
+                    _lastSyncProgressKey = key;
+                    var line = SyncProgressLocalizer.Format(progress);
+                    _journal.Write(line);
+                    if (!_syncDetached && _syncRunning)
+                        BusyLabel.Text = SyncProgressLocalizer.BusyHeader(progress);
+                    StatusSummary.Text = Loc.T("Main.Status.Syncing") + " — " + line;
+                    UpdateStatusLine.Text = line;
+                }
+                else if (!_syncDetached && _syncRunning)
+                {
+                    BusyLabel.Text = SyncProgressLocalizer.BusyHeader(progress);
+                    StatusSummary.Text = Loc.T("Main.Status.Syncing") + " — " +
+                                         SyncProgressLocalizer.Format(progress);
+                }
+            }
+            else
+            {
+                StatusSummary.Text = status.IsSyncing
+                    ? Loc.T("Main.Status.Syncing")
+                    : Loc.F("Main.Status.ActiveDomains", status.ActiveDomainCount);
+                if (!_syncDetached && _syncRunning)
+                    BusyLabel.Text = Loc.T("Main.Busy.Sync");
+            }
+
+            RefreshLogsView();
         }
         catch
         {

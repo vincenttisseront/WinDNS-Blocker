@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using DnsBlocker.Core.Net;
+using DnsBlocker.Core.Sync;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -38,7 +39,8 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
         CancellationToken cancellationToken = default,
         bool restartDnsAfterApply = true,
         int applyThrottleMs = 15,
-        int applyGcEvery = 25)
+        int applyGcEvery = 25,
+        IProgress<SyncProgressUpdate>? progress = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("PowerShellDnsPolicyProvider requires Windows.");
@@ -66,7 +68,11 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             var script = BuildApplyScriptFromManifest(manifestPath);
             try
             {
-                var output = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
+                var output = await RunPowerShellAsync(
+                        script,
+                        cancellationToken,
+                        line => TryReportApplyProgress(progress, computerName, expectedPolicies, line))
+                    .ConfigureAwait(false);
                 ValidateApplyOutput(output, computerName, expectedPolicies);
                 _logger.LogInformation(
                     "Applied and verified {Count} QRP policies on {Target} (prefix {Prefix}, action {Action}, restartDns={Restart}, throttle={Throttle}ms/{GcEvery})",
@@ -85,6 +91,39 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             try { File.Delete(manifestPath); }
             catch { /* best-effort */ }
         }
+    }
+
+    /// <summary>Parses <c>OK progress N/M</c> lines from the apply script for live Status UI updates.</summary>
+    public static void TryReportApplyProgress(
+        IProgress<SyncProgressUpdate>? progress,
+        string computerName,
+        int expectedPolicies,
+        string line)
+    {
+        if (progress is null || string.IsNullOrWhiteSpace(line))
+            return;
+
+        // "OK progress 50/200" or "OK progress 50/200 (GC)"
+        const string prefix = "OK progress ";
+        var trimmed = line.Trim();
+        if (!trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var rest = trimmed[prefix.Length..];
+        var slash = rest.IndexOf('/');
+        if (slash <= 0)
+            return;
+
+        var left = rest[..slash].Trim();
+        var rightPart = rest[(slash + 1)..];
+        var space = rightPart.IndexOf(' ');
+        var right = (space < 0 ? rightPart : rightPart[..space]).Trim();
+        if (!int.TryParse(left, out var current) || !int.TryParse(right, out var total))
+            return;
+
+        if (total <= 0)
+            total = expectedPolicies > 0 ? expectedPolicies : current;
+        progress.Report(SyncProgressUpdate.ApplyProgress(computerName, current, total));
     }
 
     public async Task<IReadOnlyList<string>> ListPolicyNamesAsync(
@@ -955,7 +994,10 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
             """;
     }
 
-    private async Task<string> RunPowerShellAsync(string script, CancellationToken cancellationToken)
+    private async Task<string> RunPowerShellAsync(
+        string script,
+        CancellationToken cancellationToken,
+        Action<string>? onStdoutLine = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -974,8 +1016,11 @@ public sealed class PowerShellDnsPolicyProvider : IDnsPolicyProvider
 
         process.OutputDataReceived += (_, e) =>
         {
-            if (e.Data is not null)
-                stdout.AppendLine(e.Data);
+            if (e.Data is null)
+                return;
+            stdout.AppendLine(e.Data);
+            try { onStdoutLine?.Invoke(e.Data); }
+            catch { /* progress must not break apply */ }
         };
         process.ErrorDataReceived += (_, e) =>
         {

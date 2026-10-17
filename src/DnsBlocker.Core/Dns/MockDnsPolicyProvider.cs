@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using DnsBlocker.Core.Sync;
 
 namespace DnsBlocker.Core.Dns;
 
@@ -29,7 +30,8 @@ public sealed class MockDnsPolicyProvider : IDnsPolicyProvider
         CancellationToken cancellationToken = default,
         bool restartDnsAfterApply = true,
         int applyThrottleMs = 15,
-        int applyGcEvery = 25)
+        int applyGcEvery = 25,
+        IProgress<SyncProgressUpdate>? progress = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _ = restartDnsAfterApply;
@@ -39,14 +41,20 @@ public sealed class MockDnsPolicyProvider : IDnsPolicyProvider
         if (FailingTargets.Contains(computerName))
             throw new InvalidOperationException($"Mock failure for target '{computerName}'.");
 
+        var expected = PowerShellDnsPolicyProvider.CountExpectedPolicies(chunks);
+        progress?.Report(SyncProgressUpdate.ApplyProgress(computerName, 0, expected));
+
         var policies = new List<PolicyRecord>();
         for (var i = 0; i < chunks.Count; i++)
         {
             var name = PowerShellDnsPolicyProvider.FormatPolicyName(policyNamePrefix, i + 1);
             policies.Add(new PolicyRecord(name, action, chunks[i].ToList(), IsEnabled: true));
+            if (expected > 0 && ((i + 1) % Math.Max(1, expected / 4) == 0 || i + 1 == chunks.Count))
+                progress?.Report(SyncProgressUpdate.ApplyProgress(computerName, i + 1, expected));
         }
 
         _store[computerName] = policies;
+        progress?.Report(SyncProgressUpdate.ApplyProgress(computerName, expected, expected));
         return Task.CompletedTask;
     }
 

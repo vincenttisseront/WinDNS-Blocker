@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.26: sync resource cap for DCs — MaxDomains 400k, curated-lists-only default, BelowNormal priority, NDJSON streamed QRP apply + GC throttle; Status tip Firefox DoH OFF / IGNORE=timeout vs DENY=REFUSED. Builds on 1.0.25 hosts parse + RSS. File.Version stamp + CA 242 + late REP retained.",
+  "releaseNotes": "1.0.27: live sync progress in Status Action Log (download / merge / QRP apply milestones / verify / done); Busy « Syncing blocklist… » header stays in sync; FR/EN. Builds on 1.0.26 DC resource cap.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

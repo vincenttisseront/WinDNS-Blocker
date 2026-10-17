@@ -1,4 +1,5 @@
 using DnsBlocker.Core.Diagnostics;
+using DnsBlocker.Core.Sync;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -22,19 +23,22 @@ public sealed class BlocklistIngestor
         IEnumerable<string>? extraBlocklistUrls = null,
         IEnumerable<string>? extraWhitelistUrls = null,
         CancellationToken cancellationToken = default,
-        int maxDomains = 0)
+        int maxDomains = 0,
+        IProgress<SyncProgressUpdate>? progress = null)
     {
         var blocklistUrls = new List<string>();
         var whitelistUrls = new List<string>();
 
         if (!string.IsNullOrWhiteSpace(blocklistsUrl))
         {
+            progress?.Report(SyncProgressUpdate.DownloadLol("blocklist", blocklistsUrl.Trim()));
             var lolBlock = await DownloadTextAsync(blocklistsUrl.Trim(), cancellationToken).ConfigureAwait(false);
             blocklistUrls.AddRange(DomainListParser.ParseListOfLists(lolBlock));
         }
 
         if (!string.IsNullOrWhiteSpace(whitelistsUrl))
         {
+            progress?.Report(SyncProgressUpdate.DownloadLol("whitelist", whitelistsUrl.Trim()));
             var lolWhite = await DownloadTextAsync(whitelistsUrl.Trim(), cancellationToken).ConfigureAwait(false);
             whitelistUrls.AddRange(DomainListParser.ParseListOfLists(lolWhite));
         }
@@ -59,6 +63,7 @@ public sealed class BlocklistIngestor
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
         var truncated = false;
+        var sourceIndex = 0;
 
         foreach (var url in blocklistUrls)
         {
@@ -71,16 +76,22 @@ public sealed class BlocklistIngestor
                 break;
             }
 
+            sourceIndex++;
             try
             {
                 var before = blocked.Count;
+                progress?.Report(SyncProgressUpdate.DownloadSource(
+                    sourceIndex, blocklistUrls.Count, url, 0, blocked.Count));
                 var hitCap = await DownloadDomainsIntoAsync(url, blocked, maxDomains, cancellationToken)
                     .ConfigureAwait(false);
                 if (hitCap)
                     truncated = true;
+                var added = blocked.Count - before;
+                progress?.Report(SyncProgressUpdate.DownloadSource(
+                    sourceIndex, blocklistUrls.Count, url, added, blocked.Count));
                 _logger.LogInformation(
                     "Blocklist {Url}: +{Added} (total {Total}, RSS {Rss})",
-                    url, blocked.Count - before, blocked.Count, ProcessMemory.FormatWorkingSet());
+                    url, added, blocked.Count, ProcessMemory.FormatWorkingSet());
                 // Brief yield so DNS/AD share the core during multi-MB parse on a DC.
                 await Task.Delay(1, cancellationToken).ConfigureAwait(false);
             }
@@ -89,6 +100,7 @@ public sealed class BlocklistIngestor
                 var msg = $"Failed blocklist {url}: {ex.Message}";
                 _logger.LogWarning(ex, "Failed to download blocklist {Url}", url);
                 errors.Add(msg);
+                progress?.Report(SyncProgressUpdate.Error(msg));
             }
         }
 
@@ -96,6 +108,8 @@ public sealed class BlocklistIngestor
         {
             try
             {
+                progress?.Report(SyncProgressUpdate.DownloadSource(
+                    0, whitelistUrls.Count, url, 0, allowed.Count));
                 await DownloadDomainsIntoAsync(url, allowed, maxDomains: 0, cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -108,6 +122,7 @@ public sealed class BlocklistIngestor
         }
 
         var wlCount = allowed.Count;
+        progress?.Report(SyncProgressUpdate.Merge(blocked.Count, wlCount));
         DomainListParser.ApplyWhitelistInPlace(blocked, allowed);
         allowed.Clear();
         allowed.TrimExcess();
