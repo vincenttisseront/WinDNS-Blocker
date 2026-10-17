@@ -418,7 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-  "releaseNotes": "1.0.27: live sync progress in Status Action Log (download / merge / QRP apply milestones / verify / done); Busy « Syncing blocklist… » header stays in sync; FR/EN. Builds on 1.0.26 DC resource cap.",
+  "releaseNotes": "1.0.28: reliable in-app MSI upgrade — stop DnsBlocker service + UI (and settle file locks) before msiexec; fix missing Main.Update.ClosingForUpgrade FR/EN; MSI MajorUpgrade late REP retained. Builds on 1.0.27 sync progress.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF

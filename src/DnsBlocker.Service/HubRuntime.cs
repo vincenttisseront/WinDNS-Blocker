@@ -593,9 +593,9 @@ public sealed class HubRuntime
 
     /// <summary>
     /// Installs an update via msiexec. Prefer silent=true when called from the service
-    /// (already LocalSystem). Do not stop the service manually — the MSI ServiceControl
-    /// table should stop/restart DnsBlocker during the upgrade.
-    /// Never kills the host process after starting msiexec; failures return <see cref="UpdateInstallResult"/>.
+    /// (already LocalSystem). The installer prep script stops/kills DnsBlocker (service + UI)
+    /// before msiexec so an active sync cannot hold file locks; MSI ServiceControl remains a backup.
+    /// Never kills the host process from this method; failures return <see cref="UpdateInstallResult"/>.
     /// </summary>
     public async Task<UpdateInstallResult> InstallUpdateAsync(
         UpdateManifest? manifest = null,
@@ -620,10 +620,17 @@ public sealed class HubRuntime
                 manifest = check.Manifest;
             }
 
+            if (_syncEngine.IsSyncing)
+            {
+                _logs.Write(
+                    "InstallUpdate: sync still running — prep will stop/kill DnsBlocker before msiexec " +
+                    "(avoids file locks / stuck InstallFiles)");
+            }
+
             _logs.Write($"Starting MSI update {manifest.Version} (silent={silent})");
             var result = await _updateInstaller.InstallAsync(manifest, silent, cancellationToken).ConfigureAwait(false);
             if (result.Started)
-                _logs.Write($"msiexec started for {manifest.Version} — service may stop via MSI ServiceControl; host process not terminated");
+                _logs.Write($"msiexec prep launched for {manifest.Version} — service/UI will stop before InstallFiles");
             else
                 _logs.Write($"Update install failed: {result.Error}");
             return result;

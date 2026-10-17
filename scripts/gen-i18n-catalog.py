@@ -435,6 +435,22 @@ CODE: list[tuple[str, str, str]] = [
      "Une nouvelle version ({0}) est disponible.{1}\n\nInstaller maintenant ?"),
     ("Main.Update.Title", "WinDNS Blocker update", "Mise à jour WinDNS Blocker"),
     ("Main.Update.Installing", "Update: installing…", "Mise à jour : installation en cours…"),
+    ("Main.Update.ClosingForUpgrade",
+     "WinDNS Blocker will close so the installer can replace files.\n\n"
+     "Any running sync and the DnsBlocker Windows service will be stopped automatically.\n\n"
+     "Click OK to continue (UAC may prompt).",
+     "WinDNS Blocker va se fermer pour que l'installateur puisse remplacer les fichiers.\n\n"
+     "Toute sync en cours et le service Windows DnsBlocker seront arrêtés automatiquement.\n\n"
+     "Cliquez sur OK pour continuer (UAC peut s'afficher)."),
+    ("Main.Update.PreparingShutdown",
+     "Update: stopping service and closing…",
+     "Mise à jour : arrêt du service et fermeture…"),
+    ("Main.Journal.PreparingShutdown",
+     "Update — stopping service / UI before msiexec",
+     "Mise à jour — arrêt service / UI avant msiexec"),
+    ("Main.Update.LaunchMsiexecFail",
+     "Could not launch the installer.",
+     "Impossible de lancer l'installateur."),
     ("Main.Journal.InstallUpdate", "Action: Install update {0}", "Action : Installer mise à jour {0}"),
     ("Main.Update.MsiexecStarted", "Update: msiexec started (service may restart)",
      "Mise à jour : msiexec démarré (le service peut redémarrer)"),

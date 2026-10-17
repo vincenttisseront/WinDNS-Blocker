@@ -147,7 +147,7 @@ Default `UpdateFeedUrl` (also shown in the first-run wizard):
 
 `https://github.com/vincenttisseront/WinDNS-Blocker/releases/latest/download/version.json`
 
-That stable “latest” asset URL always follows the newest GitHub release that publishes `version.json`. Clear the field to disable checks. **Check for updates** downloads the MSI in the UI, launches elevated `msiexec /qb`, then **exits the UI** so files unlock. Auto-install (service) kills the UI process first, then runs detached silent msiexec. IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
+That stable “latest” asset URL always follows the newest GitHub release that publishes `version.json`. Clear the field to disable checks. **Check for updates** downloads the MSI in the UI, launches an elevated helper that **stops the DnsBlocker service and UI** (releasing sync/file locks), then runs `msiexec /qb`, and **exits the UI**. Auto-install (service) uses the same stop/kill prep, then detached silent msiexec. IPC: `GetAppVersion`, `CheckForUpdates`, `InstallUpdate`.
 
 Publish both `DnsBlocker-<Version>.msi` and `version.json` as release assets on every tag so the latest feed stays valid.
 
