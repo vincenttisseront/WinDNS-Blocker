@@ -418,11 +418,7 @@ cat > "$ARTIFACTS/version.json" <<EOF
   "version": "$VERSION",
   "msiUrl": "$MSI_URL",
   "sha256": "$SHA",
-<<<<<<< HEAD
-  "releaseNotes": "QRP Criteria readback + full DnsBlocker_* wipe (PR #23). File.Version stamp + CA 242 + late REP retained.",
-=======
-  "releaseNotes": "1.0.25: fix hosts-file 0.0.0.0.domain QRP pollution (Vincent windc04); stream ingest + lower sync RSS; full DnsBlocker_* wipe + IGNORE sentinel.",
->>>>>>> 8126210 (fix: strip hosts 0.0.0.0.domain QRP pollution + cut sync RSS (1.0.25))
+  "releaseNotes": "1.0.25: fix hosts-file 0.0.0.0.domain QRP pollution (Vincent windc04); stream ingest + lower sync RSS; full DnsBlocker_* wipe + IGNORE sentinel. File.Version stamp + CA 242 + late REP retained.",
   "publishedAt": "$PUBLISHED_AT"
 }
 EOF
