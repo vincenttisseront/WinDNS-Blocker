@@ -16,6 +16,8 @@ public sealed class SyncEngine
     private readonly StateStore _state;
     private readonly ILogger<SyncEngine> _logger;
     private readonly SemaphoreSlim _syncLock = new(1, 1);
+    private readonly object _progressGate = new();
+    private SyncProgressUpdate? _currentProgress;
 
     public SyncEngine(
         BlocklistIngestor ingestor,
@@ -31,7 +33,20 @@ public sealed class SyncEngine
 
     public bool IsSyncing { get; private set; }
 
-    public async Task<SyncRunResult> RunAsync(AppConfig config, CancellationToken cancellationToken = default)
+    /// <summary>Latest phase update while <see cref="IsSyncing"/> (also mirrored to FileLogBuffer by the hub).</summary>
+    public SyncProgressUpdate? CurrentProgress
+    {
+        get
+        {
+            lock (_progressGate)
+                return _currentProgress;
+        }
+    }
+
+    public async Task<SyncRunResult> RunAsync(
+        AppConfig config,
+        CancellationToken cancellationToken = default,
+        IProgress<SyncProgressUpdate>? progress = null)
     {
         if (!await _syncLock.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
@@ -48,6 +63,16 @@ public sealed class SyncEngine
         using var priority = ProcessMemory.EnterBelowNormalPriority();
         try
         {
+            var targets = config.DnsTargets
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Bridge so ingest/provider updates also refresh CurrentProgress (IPC SoftPoll).
+            IProgress<SyncProgressUpdate> bridge = new SyncProgressBridge(u => Report(progress, u));
+
+            Report(progress, SyncProgressUpdate.Starting(targets.Count));
             _logger.LogInformation(
                 "Starting blocklist sync (priority BelowNormal, maxDomains={Max}, RSS {Rss})",
                 config.MaxDomains <= 0 ? "unlimited" : config.MaxDomains.ToString(),
@@ -59,7 +84,8 @@ public sealed class SyncEngine
                 CuratedBlocklists.ResolveExtraBlocklistUrls(config),
                 config.ExtraWhitelistUrls,
                 cancellationToken,
-                config.MaxDomains).ConfigureAwait(false);
+                config.MaxDomains,
+                bridge).ConfigureAwait(false);
 
             result.WhitelistCount = ingest.WhitelistCount;
             result.SourceListCount = ingest.SourceListCount;
@@ -78,6 +104,7 @@ public sealed class SyncEngine
                 "Prepared QRP set: ingested={Ingested} → prepared={Prepared} (RSS {Rss})",
                 ingestedCount, domains.Count, ProcessMemory.FormatWorkingSet());
 
+            Report(progress, SyncProgressUpdate.Store(domains.Count));
             _state.ReplaceDomains(domains);
             _logger.LogInformation("SQLite domain replace done (RSS {Rss})", ProcessMemory.FormatWorkingSet());
 
@@ -92,6 +119,7 @@ public sealed class SyncEngine
             domains.TrimExcess();
             ProcessMemory.TrimAfterLargeDrop(blocking: true);
 
+            Report(progress, SyncProgressUpdate.Chunk(result.DomainCount, expectedPolicies));
             _logger.LogInformation(
                 "QRP chunks={Chunks} expectedPolicies={Expected} (max {MaxPerChunk}/policy, budget {Budget} chars, RSS {Rss})",
                 chunks.Count,
@@ -100,16 +128,11 @@ public sealed class SyncEngine
                 PowerShellDnsPolicyProvider.MaxFqdnCriterionChars,
                 ProcessMemory.FormatWorkingSet());
 
-            var targets = config.DnsTargets
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
             if (targets.Count == 0)
             {
                 result.Error = "No DNS targets configured.";
                 result.FinishedAt = DateTimeOffset.UtcNow;
+                Report(progress, SyncProgressUpdate.Error(result.Error));
                 _state.SaveSyncResult(result);
                 return result;
             }
@@ -136,9 +159,11 @@ public sealed class SyncEngine
                 targetResult.Status = TargetSyncStatus.InProgress;
                 try
                 {
+                    Report(progress, SyncProgressUpdate.ApplyTarget(targetResult.Target, expectedPolicies));
                     _logger.LogInformation(
                         "Applying QRP to {Target} (RSS {Rss})",
                         targetResult.Target, ProcessMemory.FormatWorkingSet());
+
                     await _provider.ApplyPoliciesAsync(
                         targetResult.Target,
                         config.PolicyNamePrefix,
@@ -147,11 +172,13 @@ public sealed class SyncEngine
                         cancellationToken,
                         config.RestartDnsAfterPolicySync,
                         throttleMs,
-                        gcEvery).ConfigureAwait(false);
+                        gcEvery,
+                        bridge).ConfigureAwait(false);
 
                     targetResult.Status = TargetSyncStatus.Succeeded;
                     targetResult.PolicyCount = expectedPolicies;
                     targetResult.Error = null;
+                    Report(progress, SyncProgressUpdate.ApplyDone(targetResult.Target, expectedPolicies, ok: true));
                     _logger.LogInformation(
                         "Sync succeeded for {Target} ({Policies} policies, RSS {Rss})",
                         targetResult.Target, expectedPolicies, ProcessMemory.FormatWorkingSet());
@@ -160,6 +187,8 @@ public sealed class SyncEngine
                 {
                     targetResult.Status = TargetSyncStatus.Failed;
                     targetResult.Error = ex.Message;
+                    Report(progress, SyncProgressUpdate.ApplyDone(
+                        targetResult.Target, expectedPolicies, ok: false, error: ex.Message));
                     _logger.LogError(ex, "Sync failed for {Target}", targetResult.Target);
                 }
                 finally
@@ -181,6 +210,7 @@ public sealed class SyncEngine
 
             result.FinishedAt = DateTimeOffset.UtcNow;
             _state.SaveSyncResult(result);
+            // HubRuntime emits Done after post-sync QRP probe / block test.
             _logger.LogInformation("Sync finished (RSS {Rss})", ProcessMemory.FormatWorkingSet());
             return result;
         }
@@ -189,13 +219,30 @@ public sealed class SyncEngine
             result.Error = ex.Message;
             result.FinishedAt = DateTimeOffset.UtcNow;
             _state.SaveSyncResult(result);
+            Report(progress, SyncProgressUpdate.Error(ex.Message));
             _logger.LogError(ex, "Sync failed");
             return result;
         }
         finally
         {
             IsSyncing = false;
+            lock (_progressGate)
+                _currentProgress = null;
             _syncLock.Release();
         }
+    }
+
+    private void Report(IProgress<SyncProgressUpdate>? progress, SyncProgressUpdate update)
+    {
+        lock (_progressGate)
+            _currentProgress = update;
+        progress?.Report(update);
+    }
+
+    private sealed class SyncProgressBridge : IProgress<SyncProgressUpdate>
+    {
+        private readonly Action<SyncProgressUpdate> _onReport;
+        public SyncProgressBridge(Action<SyncProgressUpdate> onReport) => _onReport = onReport;
+        public void Report(SyncProgressUpdate value) => _onReport(value);
     }
 }

@@ -1,3 +1,5 @@
+using DnsBlocker.Core.Sync;
+
 namespace DnsBlocker.Core.Dns;
 
 public interface IDnsPolicyProvider
@@ -8,6 +10,7 @@ public interface IDnsPolicyProvider
     /// restarts the Windows DNS Server service so new FQDN criteria enter the query path.
     /// <paramref name="applyThrottleMs"/> / <paramref name="applyGcEvery"/> throttle PowerShell/CIM
     /// Adds on domain controllers (sleep + GC every N policies).
+    /// <paramref name="progress"/> receives phase-level apply milestones (not per-domain).
     /// </summary>
     Task ApplyPoliciesAsync(
         string computerName,
@@ -17,7 +20,8 @@ public interface IDnsPolicyProvider
         CancellationToken cancellationToken = default,
         bool restartDnsAfterApply = true,
         int applyThrottleMs = 15,
-        int applyGcEvery = 25);
+        int applyGcEvery = 25,
+        IProgress<SyncProgressUpdate>? progress = null);
 
     Task<IReadOnlyList<string>> ListPolicyNamesAsync(
         string computerName,

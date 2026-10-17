@@ -1,3 +1,5 @@
+using DnsBlocker.Core.Sync;
+
 namespace DnsBlocker.Core.Models;
 
 public enum TargetSyncStatus
@@ -46,6 +48,12 @@ public sealed class ServiceStatus
 
     /// <summary>Last live QRP probe (Get-DnsServerQueryResolutionPolicy), if any.</summary>
     public TargetPolicyStatusResult? LastPolicyProbe { get; set; }
+
+    /// <summary>
+    /// Live sync phase (download / apply / verify). Null when idle.
+    /// UI SoftPoll maps <see cref="SyncProgressUpdate.Phase"/> to i18n Action Log lines.
+    /// </summary>
+    public SyncProgressUpdate? SyncProgress { get; set; }
 }
 
 /// <summary>

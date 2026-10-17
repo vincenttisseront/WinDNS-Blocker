@@ -33,9 +33,11 @@ public sealed class HubRuntime
     private readonly object _configGate = new();
     private readonly object _updateGate = new();
     private readonly object _probeGate = new();
+    private readonly object _progressGate = new();
     private AppConfig _config;
     private UpdateCheckResult? _lastUpdateCheck;
     private TargetPolicyStatusResult? _lastPolicyProbe;
+    private SyncProgressUpdate? _hubProgress;
 
     public HubRuntime(
         ConfigStore configStore,
@@ -109,87 +111,111 @@ public sealed class HubRuntime
     public async Task<SyncRunResult> ApplyNowAsync(CancellationToken cancellationToken)
     {
         var config = GetConfig();
-        _logs.Write($"Sync started for {config.DnsTargets.Count} target(s)");
-        var result = await _syncEngine.RunAsync(config, cancellationToken).ConfigureAwait(false);
-        if (result.Error is not null)
-            _logs.Write($"Sync error: {result.Error}");
-        foreach (var t in result.Targets)
-        {
-            _logs.Write(t.Status == TargetSyncStatus.Succeeded
-                ? $"Target OK: {t.Target} ({t.PolicyCount} policies)"
-                : $"Target FAIL: {t.Target} — {t.Error}");
-        }
-
-        // Succeeded ≠ live Enabled policies — always probe Get-DnsServerQueryResolutionPolicy after sync.
-        // If Enabled=0 or Resolve-DnsName still returns public IPs, flip the target to Failed.
+        var progress = new SyncProgressBridge(ReportHubProgress);
         try
         {
-            var probe = await GetTargetPolicyStatusAsync(cancellationToken).ConfigureAwait(false);
-            var mutated = false;
-            foreach (var row in probe.Targets)
+            var result = await _syncEngine.RunAsync(config, cancellationToken, progress)
+                .ConfigureAwait(false);
+            foreach (var t in result.Targets)
             {
-                _logs.Write(row.ProbeOk
-                    ? $"QRP probe after sync: {row.Target} — installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, sync={row.LastSyncPolicyCount} → {row.AppliedLabel}"
-                    : $"QRP probe after sync FAIL: {row.Target} — {row.ProbeError}");
+                _logs.Write(t.Status == TargetSyncStatus.Succeeded
+                    ? $"Target OK: {t.Target} ({t.PolicyCount} policies)"
+                    : $"Target FAIL: {t.Target} — {t.Error}");
+            }
 
-                var targetResult = result.Targets.FirstOrDefault(t =>
-                    string.Equals(t.Target, row.Target, StringComparison.OrdinalIgnoreCase));
-                if (targetResult is null || targetResult.Status != TargetSyncStatus.Succeeded)
-                    continue;
-
-                if (!row.ProbeOk || row.LiveEnabledCount == 0 || row.LiveEmptyFqdnCount > 0 || !row.AppliedOk)
+            // Succeeded ≠ live Enabled policies — always probe Get-DnsServerQueryResolutionPolicy after sync.
+            // If Enabled=0 or Resolve-DnsName still returns public IPs, flip the target to Failed.
+            try
+            {
+                ReportHubProgress(SyncProgressUpdate.Verify());
+                var probe = await GetTargetPolicyStatusAsync(cancellationToken).ConfigureAwait(false);
+                var mutated = false;
+                foreach (var row in probe.Targets)
                 {
-                    targetResult.Status = TargetSyncStatus.Failed;
-                    targetResult.Error =
-                        $"Post-sync QRP probe: installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, " +
-                        $"emptyFqdn={row.LiveEmptyFqdnCount}, sync={row.LastSyncPolicyCount} ({row.AppliedLabel}). " +
-                        "Enabled count must be > 0, FQDN criteria non-empty, and match sync — blocking is not effective.";
-                    mutated = true;
-                    _logs.Write($"Target FAIL after probe: {row.Target} — {targetResult.Error}");
-                    continue;
-                }
+                    _logs.Write(row.ProbeOk
+                        ? $"QRP probe after sync: {row.Target} — installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, sync={row.LastSyncPolicyCount} → {row.AppliedLabel}"
+                        : $"QRP probe after sync FAIL: {row.Target} — {row.ProbeError}");
 
-                // Auto Test blocking (beeg.com) — same check Vincent runs in CMD.
-                try
-                {
-                    var sample = PreferPostSyncBlockSample(row.Target);
-                    var inList = _state.SearchDomains(sample, 20)
-                        .Any(d => d.Equals(sample, StringComparison.OrdinalIgnoreCase)
-                                  || d.Equals("*." + sample, StringComparison.OrdinalIgnoreCase));
-                    var block = await _stats.TestBlockAsync(row.Target, sample, inList, cancellationToken)
-                        .ConfigureAwait(false);
-                    _logs.Write(
-                        $"Auto block test after sync: {sample} → {row.Target}: blocked={block.AppearsBlocked} " +
-                        $"({block.ResolutionSummary ?? block.Error ?? "n/a"})");
+                    var targetResult = result.Targets.FirstOrDefault(t =>
+                        string.Equals(t.Target, row.Target, StringComparison.OrdinalIgnoreCase));
+                    if (targetResult is null || targetResult.Status != TargetSyncStatus.Succeeded)
+                        continue;
 
-                    if (inList && block.ProbeOk && !block.AppearsBlocked)
+                    if (!row.ProbeOk || row.LiveEnabledCount == 0 || row.LiveEmptyFqdnCount > 0 || !row.AppliedOk)
                     {
                         targetResult.Status = TargetSyncStatus.Failed;
                         targetResult.Error =
-                            $"Post-sync Resolve-DnsName {sample} still returns public IPs via {row.Target}: " +
-                            $"{block.ResolutionSummary}. Sync must not report Succeeded when blocking fails.";
+                            $"Post-sync QRP probe: installed={row.LivePolicyCount}, enabled={row.LiveEnabledCount}, " +
+                            $"emptyFqdn={row.LiveEmptyFqdnCount}, sync={row.LastSyncPolicyCount} ({row.AppliedLabel}). " +
+                            "Enabled count must be > 0, FQDN criteria non-empty, and match sync — blocking is not effective.";
                         mutated = true;
-                        _logs.Write($"Target FAIL after block test: {row.Target} — {targetResult.Error}");
+                        _logs.Write($"Target FAIL after probe: {row.Target} — {targetResult.Error}");
+                        continue;
+                    }
+
+                    // Auto Test blocking (beeg.com) — same check Vincent runs in CMD.
+                    try
+                    {
+                        var sample = PreferPostSyncBlockSample(row.Target);
+                        ReportHubProgress(SyncProgressUpdate.BlockTest(sample, row.Target));
+                        var inList = _state.SearchDomains(sample, 20)
+                            .Any(d => d.Equals(sample, StringComparison.OrdinalIgnoreCase)
+                                      || d.Equals("*." + sample, StringComparison.OrdinalIgnoreCase));
+                        var block = await _stats.TestBlockAsync(row.Target, sample, inList, cancellationToken)
+                            .ConfigureAwait(false);
+                        _logs.Write(
+                            $"Auto block test after sync: {sample} → {row.Target}: blocked={block.AppearsBlocked} " +
+                            $"({block.ResolutionSummary ?? block.Error ?? "n/a"})");
+
+                        if (inList && block.ProbeOk && !block.AppearsBlocked)
+                        {
+                            targetResult.Status = TargetSyncStatus.Failed;
+                            targetResult.Error =
+                                $"Post-sync Resolve-DnsName {sample} still returns public IPs via {row.Target}: " +
+                                $"{block.ResolutionSummary}. Sync must not report Succeeded when blocking fails.";
+                            mutated = true;
+                            _logs.Write($"Target FAIL after block test: {row.Target} — {targetResult.Error}");
+                        }
+                    }
+                    catch (Exception blockEx)
+                    {
+                        _logs.Write($"Auto block test after sync error ({row.Target}): {blockEx.Message}");
                     }
                 }
-                catch (Exception blockEx)
+
+                if (mutated)
                 {
-                    _logs.Write($"Auto block test after sync error ({row.Target}): {blockEx.Message}");
+                    result.FinishedAt = DateTimeOffset.UtcNow;
+                    _state.SaveSyncResult(result);
                 }
             }
-
-            if (mutated)
+            catch (Exception ex)
             {
-                result.FinishedAt = DateTimeOffset.UtcNow;
-                _state.SaveSyncResult(result);
+                _logs.Write($"QRP probe after sync error: {ex.Message}");
             }
-        }
-        catch (Exception ex)
-        {
-            _logs.Write($"QRP probe after sync error: {ex.Message}");
-        }
 
-        return result;
+            ReportHubProgress(SyncProgressUpdate.Done(result.Success, result.DomainCount, result.Targets.Count));
+            return result;
+        }
+        finally
+        {
+            lock (_progressGate)
+                _hubProgress = null;
+        }
+    }
+
+    private void ReportHubProgress(SyncProgressUpdate update)
+    {
+        lock (_progressGate)
+            _hubProgress = update;
+        _logs.Write(update.Message);
+    }
+
+    private sealed class SyncProgressBridge : IProgress<SyncProgressUpdate>
+    {
+        private readonly Action<SyncProgressUpdate> _onReport;
+        public SyncProgressBridge(Action<SyncProgressUpdate> onReport) => _onReport = onReport;
+        public void Report(SyncProgressUpdate value) => _onReport(value);
     }
 
     private static string PreferPostSyncBlockSample(string _) => "beeg.com";
@@ -200,16 +226,21 @@ public sealed class HubRuntime
         lock (_probeGate)
             lastProbe = _lastPolicyProbe;
 
+        SyncProgressUpdate? syncProgress;
+        lock (_progressGate)
+            syncProgress = _hubProgress ?? _syncEngine.CurrentProgress;
+
         return new ServiceStatus
         {
-            IsSyncing = _syncEngine.IsSyncing,
+            IsSyncing = _syncEngine.IsSyncing || syncProgress is not null,
             LastRun = _state.LoadLastSync(),
             NextScheduledUtc = nextScheduledUtc,
             ActiveDomainCount = _state.CountDomains(),
             RecentLogs = _logs.GetRecent(80).ToList(),
             StatsEnabled = _stats.IsEnabled,
             StatsMessage = _stats.Message,
-            LastPolicyProbe = lastProbe
+            LastPolicyProbe = lastProbe,
+            SyncProgress = syncProgress
         };
     }
 
