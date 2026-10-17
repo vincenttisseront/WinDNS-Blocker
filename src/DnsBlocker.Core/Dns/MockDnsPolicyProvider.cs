@@ -27,10 +27,14 @@ public sealed class MockDnsPolicyProvider : IDnsPolicyProvider
         string action,
         IReadOnlyList<IReadOnlyList<string>> chunks,
         CancellationToken cancellationToken = default,
-        bool restartDnsAfterApply = true)
+        bool restartDnsAfterApply = true,
+        int applyThrottleMs = 15,
+        int applyGcEvery = 25)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _ = restartDnsAfterApply;
+        _ = applyThrottleMs;
+        _ = applyGcEvery;
 
         if (FailingTargets.Contains(computerName))
             throw new InvalidOperationException($"Mock failure for target '{computerName}'.");

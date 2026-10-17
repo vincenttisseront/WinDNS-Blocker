@@ -21,16 +21,23 @@ public sealed class BlocklistIngestor
         string whitelistsUrl,
         IEnumerable<string>? extraBlocklistUrls = null,
         IEnumerable<string>? extraWhitelistUrls = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int maxDomains = 0)
     {
         var blocklistUrls = new List<string>();
         var whitelistUrls = new List<string>();
 
-        var lolBlock = await DownloadTextAsync(blocklistsUrl, cancellationToken).ConfigureAwait(false);
-        blocklistUrls.AddRange(DomainListParser.ParseListOfLists(lolBlock));
+        if (!string.IsNullOrWhiteSpace(blocklistsUrl))
+        {
+            var lolBlock = await DownloadTextAsync(blocklistsUrl.Trim(), cancellationToken).ConfigureAwait(false);
+            blocklistUrls.AddRange(DomainListParser.ParseListOfLists(lolBlock));
+        }
 
-        var lolWhite = await DownloadTextAsync(whitelistsUrl, cancellationToken).ConfigureAwait(false);
-        whitelistUrls.AddRange(DomainListParser.ParseListOfLists(lolWhite));
+        if (!string.IsNullOrWhiteSpace(whitelistsUrl))
+        {
+            var lolWhite = await DownloadTextAsync(whitelistsUrl.Trim(), cancellationToken).ConfigureAwait(false);
+            whitelistUrls.AddRange(DomainListParser.ParseListOfLists(lolWhite));
+        }
 
         if (extraBlocklistUrls is not null)
             blocklistUrls.AddRange(extraBlocklistUrls.Where(u => !string.IsNullOrWhiteSpace(u)));
@@ -41,23 +48,41 @@ public sealed class BlocklistIngestor
         whitelistUrls = whitelistUrls.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         _logger.LogInformation(
-            "Resolved {BlockCount} blocklist URLs and {WhiteCount} whitelist URLs (RSS {Rss})",
-            blocklistUrls.Count, whitelistUrls.Count, ProcessMemory.FormatWorkingSet());
+            "Resolved {BlockCount} blocklist URLs and {WhiteCount} whitelist URLs (maxDomains={Max}, RSS {Rss})",
+            blocklistUrls.Count,
+            whitelistUrls.Count,
+            maxDomains <= 0 ? "unlimited" : maxDomains.ToString(),
+            ProcessMemory.FormatWorkingSet());
 
         // Single working set for blocked domains — stream each source (no full-file string + HashSet pair).
         var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
+        var truncated = false;
 
         foreach (var url in blocklistUrls)
         {
+            if (maxDomains > 0 && blocked.Count >= maxDomains)
+            {
+                truncated = true;
+                _logger.LogWarning(
+                    "MaxDomains={Max} reached — skipping remaining blocklist sources (RSS {Rss})",
+                    maxDomains, ProcessMemory.FormatWorkingSet());
+                break;
+            }
+
             try
             {
                 var before = blocked.Count;
-                await DownloadDomainsIntoAsync(url, blocked, cancellationToken).ConfigureAwait(false);
+                var hitCap = await DownloadDomainsIntoAsync(url, blocked, maxDomains, cancellationToken)
+                    .ConfigureAwait(false);
+                if (hitCap)
+                    truncated = true;
                 _logger.LogInformation(
                     "Blocklist {Url}: +{Added} (total {Total}, RSS {Rss})",
                     url, blocked.Count - before, blocked.Count, ProcessMemory.FormatWorkingSet());
+                // Brief yield so DNS/AD share the core during multi-MB parse on a DC.
+                await Task.Delay(1, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -71,7 +96,8 @@ public sealed class BlocklistIngestor
         {
             try
             {
-                await DownloadDomainsIntoAsync(url, allowed, cancellationToken).ConfigureAwait(false);
+                await DownloadDomainsIntoAsync(url, allowed, maxDomains: 0, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -84,7 +110,24 @@ public sealed class BlocklistIngestor
         var wlCount = allowed.Count;
         DomainListParser.ApplyWhitelistInPlace(blocked, allowed);
         allowed.Clear();
+        allowed.TrimExcess();
         ProcessMemory.TrimAfterLargeDrop();
+
+        if (maxDomains > 0 && blocked.Count > maxDomains)
+        {
+            DomainListParser.EnforceMaxDomains(blocked, maxDomains);
+            truncated = true;
+        }
+
+        if (truncated)
+        {
+            errors.Add(
+                $"MaxDomains={maxDomains} truncated the block set to {blocked.Count} entries. " +
+                "Prefer curated OISD wildcards (empty blocklists.txt URL) on domain controllers.");
+            _logger.LogWarning(
+                "Ingest truncated to MaxDomains={Max} ({Count} kept, RSS {Rss})",
+                maxDomains, blocked.Count, ProcessMemory.FormatWorkingSet());
+        }
 
         _logger.LogInformation(
             "Ingest complete: {Domains} domains after whitelist (wl sources had {WlCount}, RSS {Rss})",
@@ -95,13 +138,15 @@ public sealed class BlocklistIngestor
             Domains = blocked,
             WhitelistCount = wlCount,
             SourceListCount = blocklistUrls.Count,
-            Errors = errors
+            Errors = errors,
+            TruncatedByMaxDomains = truncated
         };
     }
 
-    private async Task DownloadDomainsIntoAsync(
+    private async Task<bool> DownloadDomainsIntoAsync(
         string url,
         HashSet<string> domains,
+        int maxDomains,
         CancellationToken cancellationToken)
     {
         _logger.LogDebug("Downloading {Url}", url);
@@ -114,7 +159,7 @@ public sealed class BlocklistIngestor
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken)
             .ConfigureAwait(false);
         using var reader = new StreamReader(stream);
-        DomainListParser.ParseDomainsInto(reader, domains);
+        return DomainListParser.ParseDomainsInto(reader, domains, maxDomains);
     }
 
     private async Task<string> DownloadTextAsync(string url, CancellationToken cancellationToken)
@@ -132,4 +177,5 @@ public sealed class IngestResult
     public int WhitelistCount { get; init; }
     public int SourceListCount { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
+    public bool TruncatedByMaxDomains { get; init; }
 }

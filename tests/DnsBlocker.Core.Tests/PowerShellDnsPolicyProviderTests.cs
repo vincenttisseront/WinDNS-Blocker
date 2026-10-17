@@ -24,10 +24,17 @@ public class PowerShellDnsPolicyProviderTests
         Assert.Contains("VERIFY installed=", script, StringComparison.Ordinal);
         Assert.Contains("SMOKE_FAIL", script, StringComparison.Ordinal);
         Assert.Contains("Add-DnsServerQueryResolutionPolicy -ComputerName $Computer", script, StringComparison.Ordinal);
+        // NDJSON stream + DC throttle (no full ConvertFrom-Json of multi-MB policies array).
+        Assert.Contains("StreamReader", script, StringComparison.Ordinal);
+        Assert.Contains("[GC]::Collect()", script, StringComparison.Ordinal);
+        Assert.Contains("throttleMs", script, StringComparison.Ordinal);
         var manifest = ReadManifestFromScriptComment(script);
         Assert.Contains("\"local\":false", manifest, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("windc05.ar-systems.fr", manifest, StringComparison.Ordinal);
         Assert.Contains("IGNORE", manifest, StringComparison.Ordinal);
+        Assert.Contains("\"throttleMs\":", manifest, StringComparison.Ordinal);
+        // Header + one policy per line (not a single JSON array).
+        Assert.Contains('\n', manifest);
     }
 
     [Fact]
@@ -60,6 +67,7 @@ public class PowerShellDnsPolicyProviderTests
 
         Assert.Contains("DNS_RESTART_SKIPPED", script, StringComparison.Ordinal);
         Assert.Contains("$restartDns = [bool]$manifest.restartDns", script, StringComparison.Ordinal);
+        Assert.Contains("[GC]::Collect()", script, StringComparison.Ordinal);
     }
 
     [Fact]

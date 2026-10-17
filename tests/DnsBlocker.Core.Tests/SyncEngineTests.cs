@@ -41,7 +41,11 @@ public class SyncEngineTests
                 DnsTargets = ["dns-ok.local", "dns-bad.local"],
                 ChunkSize = 1000,
                 MaxParallelTargets = 2,
-                PolicyAction = "DENY"
+                PolicyAction = "DENY",
+                CuratedYoutubeAds = false,
+                CuratedOisdBig = false,
+                CuratedOisdNsfw = false,
+                CuratedChadmayfieldPorn = false
             };
 
             var result = await engine.RunAsync(config);
@@ -89,7 +93,12 @@ public class SyncEngineTests
             {
                 BlocklistsUrl = "https://lol.test/blocklists.txt",
                 WhitelistsUrl = "https://lol.test/whitelists.txt",
-                DnsTargets = ["localhost"]
+                DnsTargets = ["localhost"],
+                CuratedYoutubeAds = false,
+                CuratedOisdBig = false,
+                CuratedOisdNsfw = false,
+                CuratedChadmayfieldPorn = false,
+                MaxDomains = 400_000
             });
 
             Assert.Equal(1, result.DomainCount);

@@ -51,7 +51,7 @@
   <sys:String x:Key="Status.LivePoliciesTitle">Politiques QRP installées (sonde live Get-DnsServerQueryResolutionPolicy)</sys:String>
   <sys:String x:Key="Status.NoProbeYet">Aucune sonde encore — lancée automatiquement après sync, ou cliquez « Vérifier les politiques QRP ».</sys:String>
   <sys:String x:Key="Status.BlockTestTitle">Tester le blocage (nslookup vers la cible DNS)</sys:String>
-  <sys:String x:Key="Status.BlockTestHint">Saisissez un domaine de la blocklist (ex. beeg.com). Attendez REFUSED / timeout / NXDOMAIN — pas des IP Cloudflare. Le DNS client doit être uniquement ce serveur (pas de DoH).</sys:String>
+  <sys:String x:Key="Status.BlockTestHint">Saisissez un domaine de la blocklist (ex. beeg.com). Testez chaque cible de la farm (ex. windc04 et windc05). IGNORE = drop → timeout nslookup ; DENY = REFUSED (le client peut basculer vers un autre DNS). Firefox peut encore charger le site via DoH — désactivez DNS over HTTPS (Paramètres → Vie privée → Activer DNS via HTTPS OFF, ou about:config network.trr.mode=5). Préférez nslookup - server CIBLE beeg.com au navigateur.</sys:String>
   <sys:String x:Key="Status.Col.Applied">Application</sys:String>
   <sys:String x:Key="Status.Col.Installed">Installées</sys:String>
   <sys:String x:Key="Status.Col.Enabled">Activées</sys:String>
@@ -60,7 +60,10 @@
   <sys:String x:Key="Status.ActionLog">Journal d'actions (Statut)</sys:String>
   <sys:String x:Key="Cfg.SourcesTitle">Sources de listes</sys:String>
   <sys:String x:Key="Cfg.BlocklistsUrl">URL blocklists.txt (liste de listes)</sys:String>
+  <sys:String x:Key="Cfg.BlocklistsUrlHint">Laissez vide pour curated uniquement (recommandé sur DC — wildcards OISD). Collez l’URL Steve Jenkins LoL seulement si vous voulez des millions d’hôtes (plafond Max domains).</sys:String>
   <sys:String x:Key="Cfg.WhitelistsUrl">URL whitelists.txt</sys:String>
+  <sys:String x:Key="Cfg.MaxDomains">Max domaines (0 = illimité)</sys:String>
+  <sys:String x:Key="Cfg.MaxDomainsHint">Par défaut 400000 pour garder DnsBlocker.Service sous ~300 Mo sur un DC. OISD curated seul reste en général bien en dessous.</sys:String>
   <sys:String x:Key="Cfg.RegexUrl">regex.txt (non supporté par Windows DNS QRP — informatif)</sys:String>
   <sys:String x:Key="Cfg.CuratedTitle">Listes supplémentaires (curated)</sys:String>
   <sys:String x:Key="Cfg.CuratedHint">Rechargées à chaque sync quotidienne (heure ci-dessous) et via « Mettre à jour maintenant ».</sys:String>
